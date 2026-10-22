@@ -171,3 +171,16 @@ python verify_all.py     # 跑三遍，全绿才准提交
 
 **MIT License** —— 随便用、随便改、拿去二次发布都行，
 只需要保留一行版权声明。不用问我，也不用通知我。
+
+---
+
+## 关键词（方便有需要的人搜到这里）
+
+**中文**：无障碍 · 读屏 · 屏幕朗读 · 拾字 · 抓字 · 点读 · 放大镜 · 放大字体 ·
+悬浮球 · 悬浮窗 · 老人手机助手 · 老年人 · 长辈模式 · 低视力 · 弱视 ·
+视障 · 盲人 · 听书 · 听新闻 · 语音朗读 · 中文朗读
+
+**English**：android accessibility service · screen reader ·
+text to speech · TTS · magnifier · screen magnifier · zoom ·
+floating ball · assistive touch · low vision · visually impaired ·
+talkback alternative · chinese TTS · read aloud
