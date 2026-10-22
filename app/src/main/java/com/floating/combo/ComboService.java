@@ -56,6 +56,15 @@ public class ComboService extends AccessibilityService
     private int state = ST_IDLE;
     private boolean zooming = false;
 
+    /**
+     * 选取态的「代号」。每次状态一变就 +1，用来作废还在排队的「延迟抓字」任务。
+     *
+     * 覆盖层抬手后会延迟 250ms 再抓字（等窗口恢复常态）。这 250ms 里用户完全
+     * 可能又点了球：那一下要么是取消选取、要么是要放大。作废掉排队任务，
+     * 否则就出现「点了取消它还在读」。
+     */
+    private int pickSeq = 0;
+
     public static boolean isRunning() {
         return instance != null;
     }
@@ -191,6 +200,7 @@ public class ComboService extends AccessibilityService
 
     private void closeAll() {
         stopSpeakingInternal();
+        pickSeq++;
         removeOverlay();
         if (zoom != null) {
             zoom.zoomOut();
@@ -212,6 +222,7 @@ public class ComboService extends AccessibilityService
     public void onZoomStart(float fx, float fy) {
         Log.state(stName(state), stName(ST_IDLE), "要放大，先清干净");
         stopSpeakingInternal();
+        pickSeq++;      // 作废可能还在排队的抓字任务
         removeOverlay();
         state = ST_IDLE;
         zooming = true;
@@ -254,6 +265,8 @@ public class ComboService extends AccessibilityService
         if (zooming) {
             return;   // 放大中不响应轻点
         }
+        // 点球本身就是在改状态，先作废排队中的抓字任务
+        pickSeq++;
         if (state == ST_SPEAKING) {
             Log.i("tts", "朗读中轻点球 → 停止");
             stopSpeaking();
@@ -349,13 +362,8 @@ public class ComboService extends AccessibilityService
             toIdle();
             return;
         }
+        // grabFrom 内部已经兜过 grabAt，这里不用再来一遍
         String text = grabber.grabFrom(x, y);
-        if (text == null || text.trim().length() == 0) {
-            text = grabber.grabAt(x, y);
-            if (text != null) {
-                Log.w("grab", "三层抓字为空，兜底抓到 " + text.length() + " 字");
-            }
-        }
         if (text == null || text.trim().length() == 0) {
             Log.w("grab", "(" + x + "," + y + ") 什么都没抓到");
             toast("这里没读到文字");
@@ -411,10 +419,17 @@ public class ComboService extends AccessibilityService
                     final int x = (int) e.getRawX();
                     final int y = (int) e.getRawY();
                     removeOverlay();
+                    final int seq = pickSeq;
                     // 等覆盖层撤掉、窗口恢复常态再抓，否则可能抓到自己的覆盖层
                     h.postDelayed(new Runnable() {
                         @Override
                         public void run() {
+                            // 这 250ms 里球可能又被点了（取消选取 / 要放大），
+                            // 那这次屏幕点击就作废，别再读出来
+                            if (seq != pickSeq || state != ST_PICKING) {
+                                Log.i("pick", "点击已作废（期间状态变了），跳过抓字");
+                                return;
+                            }
                             readAt(x, y);
                         }
                     }, 250);

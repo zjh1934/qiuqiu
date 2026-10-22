@@ -43,7 +43,8 @@ ComboService.java   唯一服务：手势分发 + 状态机 + 保活通知
 BallController.java 手势判定（拖动 / 按住放大 / 轻点）
 BallView.java       球的绘制，四态（待命/放大/选取/朗读）
 ZoomController.java 系统放大控制
-TextGrabber.java    三层抓字：定位到段 → 精确到句 → 续读
+TextGrabber.java    抓字：多窗口取根 → 单趟收集 → 阅读顺序 → 精确到句 → 续读
+TextLayout.java     纯排版逻辑（阅读顺序 / 断句），无 Android 依赖，可单测
 TtsManager.java     TTS 引擎与音色管理
 Prefs.java          设置读写
 MainActivity.java   三个 Tab 的界面
