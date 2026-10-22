@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 8 以下不支持 adaptive icon，用这个简版：蓝球 + 浅蓝细边 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="#1565C0" />
+    <stroke
+        android:width="2dp"
+        android:color="#8AB4F8" />
+    <size
+        android:width="48dp"
+        android:height="48dp" />
+</shape>

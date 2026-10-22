@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">球球</string>
+    <string name="acc_desc">球球：点一下选屏幕上的文字朗读，按住放大取景，拖动挪位置。</string>
+</resources>

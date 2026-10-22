@@ -1,0 +1,11 @@
+// 根构建文件。保持最小，避免 AIDE 因仓库/插件版本不一致报错。
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+task clean(type: Delete) {
+    delete rootProject.buildDir
+}

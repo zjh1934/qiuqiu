@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 外圈：细描边，让球有边界感，不是"一个圆加白边" -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#8AB4F8"
+        android:strokeWidth="2.2"
+        android:pathData="M54,54m-31,0a31,31 0,1,0 62,0a31,31 0,1,0 -62,0" />
+
+    <!-- 主球：径向渐变，亮源在左上，做出玻璃球体积感 -->
+    <path
+        android:pathData="M54,54m-26,0a26,26 0,1,0 52,0a26,26 0,1,0 -52,0">
+        <aapt:attr xmlns:aapt="http://schemas.android.com/aapt"
+            name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="0.36"
+                android:centerY="0.30"
+                android:gradientRadius="0.78">
+                <item android:offset="0.0" android:color="#FF8AB4F8" />
+                <item android:offset="0.45" android:color="#FF4A8FE7" />
+                <item android:offset="1.0" android:color="#FF1565C0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 高光：左上小椭圆 -->
+    <path
+        android:fillColor="#66FFFFFF"
+        android:pathData="M45,38.5a9.5,6.5 0,1,0 19,0a9.5,6.5 0,1,0 -19,0" />
+
+    <!-- 内球：白色小圆，形成同心双球 -->
+    <path
+        android:fillColor="#F2FFFFFF"
+        android:pathData="M54,54m-9.5,0a9.5,9.5 0,1,0 19,0a9.5,9.5 0,1,0 -19,0" />
+
+    <!-- 内球的暗边，避免白球显得贴纸一样平 -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#331565C0"
+        android:strokeWidth="1.4"
+        android:pathData="M54,54m-9.5,0a9.5,9.5 0,1,0 19,0a9.5,9.5 0,1,0 -19,0" />
+
+</vector>

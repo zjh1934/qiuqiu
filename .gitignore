@@ -1,0 +1,12 @@
+# 构建产物
+build/
+**/build/
+.gradle/
+*.iml
+local.properties
+
+# 生成的 R 文件副本（留源码里的即可）
+app/build/gen/
+app/build/injected/
+app/build/intermediate/
+app/build/bin/
