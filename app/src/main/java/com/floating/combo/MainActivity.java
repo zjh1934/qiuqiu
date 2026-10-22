@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
+import android.graphics.PorterDuff;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.provider.Settings;
@@ -70,7 +71,7 @@ public class MainActivity extends Activity
         Log.i("ui", "主界面打开");
 
         ScrollView sv = new ScrollView(this);
-        sv.setBackgroundColor(Color.parseColor("#121212"));
+        sv.setBackgroundColor(Theme.BG);
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -78,6 +79,7 @@ public class MainActivity extends Activity
         root.setPadding(p, p, p, dp(24));
         sv.addView(root);
 
+        root.addView(brandHeader(), lp(0, 0, 0, dp(12)));
         root.addView(cardTop(), lp(0, 0, 0, dp(12)));
         root.addView(tabBar(), lp(0, 0, 0, dp(10)));
         body = new LinearLayout(this);
@@ -116,7 +118,7 @@ public class MainActivity extends Activity
     private View cardTop() {
         LinearLayout c = card();
 
-        btnOn = new Button(this);
+        btnOn = primaryBtn();
         btnOn.setTextSize(16);
         btnOn.setAllCaps(false);
         btnOn.setOnClickListener(new View.OnClickListener() {
@@ -186,7 +188,16 @@ public class MainActivity extends Activity
         }
         sb.append("\n● 点球选字朗读　● 按住球放大");
         tvStatus.setText(sb.toString());
-        tvStatus.setTextColor(Color.parseColor("#B0B0B0"));
+        tvStatus.setTextColor(Theme.TEXT_2);
+
+        // 开启/关闭按钮随状态换肤：关时是品牌渐变"开启"，开时是描边"关闭"
+        if (on) {
+            btnOn.setBackgroundDrawable(Theme.rounded(Theme.SURFACE_2, dp(12), Theme.DANGER, 1));
+            btnOn.setTextColor(Theme.DANGER);
+        } else {
+            btnOn.setBackgroundDrawable(Theme.brandGradientPill(dp(12)));
+            btnOn.setTextColor(Color.WHITE);
+        }
 
         // 无障碍开着就把这个按钮收起来，别占地方
         bAcc.setVisibility(acc ? View.GONE : View.VISIBLE);
@@ -211,7 +222,9 @@ public class MainActivity extends Activity
     private View tabBar() {
         tabBar = new LinearLayout(this);
         tabBar.setOrientation(LinearLayout.HORIZONTAL);
-        tabBar.setBackgroundColor(Color.parseColor("#1E1E1E"));
+        tabBar.setBackgroundDrawable(Theme.rounded(Theme.SURFACE, dp(14), Theme.BORDER, 1));
+        int pad = dp(5);
+        tabBar.setPadding(pad, pad, pad, pad);
 
         String[] names = new String[]{"朗读", "放大", "球"};
         for (int i = 0; i < names.length; i++) {
@@ -219,10 +232,11 @@ public class MainActivity extends Activity
             Button b = new Button(this);
             b.setText(names[i]);
             b.setAllCaps(false);
-            b.setBackgroundColor(Color.TRANSPARENT);
             b.setTextSize(14);
+            b.setBackgroundDrawable(Theme.rounded(Theme.TRANSPARENT, dp(10), 0, 0));
             LinearLayout.LayoutParams l =
                     new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            l.setMargins(dp(4), 0, dp(4), 0);
             b.setLayoutParams(l);
             b.setOnClickListener(new View.OnClickListener() {
                 @Override
@@ -242,9 +256,12 @@ public class MainActivity extends Activity
         body.removeAllViews();
         body.addView(pages[idx]);
         for (int i = 0; i < tabs.length; i++) {
-            tabs[i].setTextColor(i == idx
-                    ? Color.parseColor("#64B5F6") : Color.parseColor("#6E6E6E"));
-            tabs[i].setTextSize(i == idx ? 15 : 14);
+            boolean active = (i == idx);
+            tabs[i].setTextColor(active ? Color.WHITE : Theme.TEXT_2);
+            tabs[i].setTextSize(active ? 15 : 14);
+            tabs[i].setBackgroundDrawable(active
+                    ? Theme.brandGradientPill(dp(10))
+                    : Theme.rounded(Theme.TRANSPARENT, dp(10), 0, 0));
         }
     }
 
@@ -255,14 +272,16 @@ public class MainActivity extends Activity
 
         tvEngineInfo = new TextView(this);
         tvEngineInfo.setTextSize(12);
-        tvEngineInfo.setTextColor(Color.parseColor("#909090"));
+        tvEngineInfo.setTextColor(Theme.TEXT_2);
         c.addView(tvEngineInfo, lp(0, 0, 0, dp(10)));
 
         spEngine = new Spinner(this);
+        spEngine.setBackgroundDrawable(Theme.rounded(Theme.SURFACE_2, dp(10), Theme.BORDER, 1));
         c.addView(rowText("语音引擎", ""), lp(0, 0, 0, dp(4)));
         c.addView(spEngine, lp(0, 0, 0, dp(10)));
 
         spVoice = new Spinner(this);
+        spVoice.setBackgroundDrawable(Theme.rounded(Theme.SURFACE_2, dp(10), Theme.BORDER, 1));
         c.addView(rowText("音色", ""), lp(0, 0, 0, dp(4)));
         c.addView(spVoice, lp(0, 0, 0, dp(10)));
 
@@ -437,7 +456,7 @@ public class MainActivity extends Activity
 
         TextView tip = new TextView(this);
         tip.setTextSize(12);
-        tip.setTextColor(Color.parseColor("#909090"));
+        tip.setTextColor(Theme.TEXT_2);
         tip.setText("按住球不动 → 放大，手指挪动 → 画面跟着走，松手 → 恢复。\n"
                 + "放大期间不会朗读，也不会进入选取态。");
         tip.setLineSpacing(dp(2), 1f);
@@ -463,7 +482,7 @@ public class MainActivity extends Activity
 
         TextView tip2 = new TextView(this);
         tip2.setTextSize(12);
-        tip2.setTextColor(Color.parseColor("#909090"));
+        tip2.setTextColor(Theme.TEXT_2);
         tip2.setText("上面这个越长，越不容易误触发放大；越短，放大越灵敏。\n"
                 + "手快、总是不小心放大的，往长了调。");
         tip2.setLineSpacing(dp(2), 1f);
@@ -549,7 +568,7 @@ public class MainActivity extends Activity
         TextView t = new TextView(this);
         t.setText("球颜色");
         t.setTextSize(14);
-        t.setTextColor(Color.parseColor("#E0E0E0"));
+        t.setTextColor(Theme.TEXT);
         c.addView(t, lp(0, 0, 0, dp(8)));
 
         LinearLayout colors = new LinearLayout(this);
@@ -565,9 +584,9 @@ public class MainActivity extends Activity
             g.setColor(Prefs.COLORS[i]);
             g.setCornerRadius(d / 2f);
             if (i == colorIndex) {
-                g.setStroke(dp(3), Color.parseColor("#64B5F6"));
+                g.setStroke(dp(3), Theme.ACCENT);
             } else {
-                g.setStroke(1, Color.parseColor("#555555"));
+                g.setStroke(1, Theme.BORDER);
             }
             v.setBackgroundDrawable(g);
             v.setOnClickListener(new View.OnClickListener() {
@@ -579,9 +598,9 @@ public class MainActivity extends Activity
                         View cv = colors.getChildAt(j);
                         GradientDrawable cg = (GradientDrawable) cv.getBackground();
                         if (j == idx) {
-                            cg.setStroke(dp(3), Color.parseColor("#64B5F6"));
+                            cg.setStroke(dp(3), Theme.ACCENT);
                         } else {
-                            cg.setStroke(1, Color.parseColor("#555555"));
+                            cg.setStroke(1, Theme.BORDER);
                         }
                     }
                     ComboService.refresh();
@@ -694,7 +713,7 @@ public class MainActivity extends Activity
 
         tvLog = new TextView(this);
         tvLog.setTextSize(11);
-        tvLog.setTextColor(Color.parseColor("#909090"));
+        tvLog.setTextColor(Theme.TEXT_2);
         tvLog.setTypeface(android.graphics.Typeface.MONOSPACE);
         tvLog.setSingleLine(false);
         logBody.addView(tvLog, lp(0, 0, 0, dp(8)));
@@ -757,12 +776,8 @@ public class MainActivity extends Activity
     private LinearLayout card() {
         LinearLayout c = new LinearLayout(this);
         c.setOrientation(LinearLayout.VERTICAL);
-        c.setBackgroundColor(Color.parseColor("#1E1E1E"));
-        GradientDrawable g = new GradientDrawable();
-        g.setColor(Color.parseColor("#1E1E1E"));
-        g.setCornerRadius(dp(12));
-        c.setBackgroundDrawable(g);
-        int p = dp(14);
+        c.setBackgroundDrawable(Theme.rounded(Theme.SURFACE, dp(16), Theme.BORDER, 1));
+        int p = dp(16);
         c.setPadding(p, p, p, p);
         return c;
     }
@@ -781,7 +796,7 @@ public class MainActivity extends Activity
         TextView a = new TextView(this);
         a.setText(name);
         a.setTextSize(14);
-        a.setTextColor(Color.parseColor("#E0E0E0"));
+        a.setTextColor(Theme.TEXT);
         r.addView(a);
         return r;
     }
@@ -791,8 +806,63 @@ public class MainActivity extends Activity
         b.setText(text);
         b.setAllCaps(false);
         b.setTextSize(14);
-        b.setBackgroundColor(Color.parseColor("#2A2A2A"));
-        b.setTextColor(Color.parseColor("#64B5F6"));
+        b.setBackgroundDrawable(Theme.rounded(Theme.SURFACE_2, dp(10), Theme.BORDER, 1));
+        b.setTextColor(Theme.TEXT);
+        b.setPadding(dp(12), dp(9), dp(12), dp(9));
+        return b;
+    }
+
+    /** 顶部品牌横幅（纯装饰，不参与任何功能逻辑）。 */
+    private View brandHeader() {
+        LinearLayout c = new LinearLayout(this);
+        c.setOrientation(LinearLayout.VERTICAL);
+        c.setBackgroundDrawable(Theme.brandGradientPill(dp(18)));
+        c.setPadding(dp(18), dp(20), dp(18), dp(20));
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView title = new TextView(this);
+        title.setText("球球");
+        title.setTextSize(26);
+        title.setTextColor(Color.WHITE);
+        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        row.addView(title);
+
+        TextView badge = new TextView(this);
+        badge.setText(" 2.0 ");
+        badge.setTextSize(13);
+        badge.setTextColor(Color.WHITE);
+        badge.setBackgroundDrawable(Theme.rounded(0x33FFFFFF, dp(10), 0, 0));
+        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        blp.leftMargin = dp(8);
+        badge.setLayoutParams(blp);
+        row.addView(badge);
+
+        c.addView(row);
+
+        TextView sub = new TextView(this);
+        sub.setText("点字即读 · 按住放大 · 拖动挪位");
+        sub.setTextSize(13);
+        sub.setTextColor(0xCCFFFFFF);
+        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        slp.topMargin = dp(8);
+        sub.setLayoutParams(slp);
+        c.addView(sub);
+
+        return c;
+    }
+
+    /** 主操作按钮：品牌渐变 + 白字，用于"开启/关闭悬浮球"这种关键动作。 */
+    private Button primaryBtn() {
+        Button b = new Button(this);
+        b.setAllCaps(false);
+        b.setBackgroundDrawable(Theme.brandGradientPill(dp(12)));
+        b.setTextColor(Color.WHITE);
+        b.setPadding(dp(16), dp(12), dp(16), dp(12));
         return b;
     }
 
@@ -811,12 +881,12 @@ public class MainActivity extends Activity
         TextView t = new TextView(this);
         t.setText(name);
         t.setTextSize(14);
-        t.setTextColor(Color.parseColor("#E0E0E0"));
+        t.setTextColor(Theme.TEXT);
         head.addView(t, new LinearLayout.LayoutParams(
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         val.setTextSize(13);
-        val.setTextColor(Color.parseColor("#64B5F6"));
+        val.setTextColor(Theme.ACCENT);
         val.setGravity(Gravity.RIGHT);
         head.addView(val);
         r.addView(head);
@@ -825,6 +895,13 @@ public class MainActivity extends Activity
         sb.setMax(max - min);
         int p = Math.max(0, Math.min(max - min, cur - min));
         sb.setProgress(p);
+        try {
+            sb.getProgressDrawable().setColorFilter(Theme.ACCENT, PorterDuff.Mode.SRC_IN);
+            if (sb.getThumb() != null) {
+                sb.getThumb().setColorFilter(Theme.ACCENT, PorterDuff.Mode.SRC_IN);
+            }
+        } catch (Exception ignored) {
+        }
         val.setText(fmt(name, cur));
         sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
