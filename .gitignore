@@ -11,10 +11,6 @@ app/build/injected/
 app/build/intermediate/
 app/build/bin/
 
-# 打包产物
-*.apk
-*.aab
-
 # 编辑器 / IDE 工具产物（不是工程源码）
 settings.json
 .idea/
