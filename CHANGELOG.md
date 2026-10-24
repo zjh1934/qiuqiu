@@ -55,7 +55,13 @@ Android 只有一个 `TYPE_SYSTEM` 同时代表状态栏和导航栏。改成 `T
 ### 构建
 
 这台机器上装了 JDK 17 + Android SDK 30 / build-tools 30.0.3，
-可以直接出包：`bash build_apk.sh`（见脚本里的步骤说明，aapt2 → javac → d8 → zipalign → apksigner）。
+可以直接出包：`bash build_apk.sh`（aapt2 → javac → d8 → zipalign → apksigner）。
+版本号从 `app/build.gradle` 读，产物直接落到 `releases/看得清-<版本>.apk`。
+
+### 关于旧版本
+
+**每个版本的安装包都留在 `releases/` 里，不覆盖、不删除。**
+2.0（原名「球球」）也在，出问题可以退回。
 
 ---
 

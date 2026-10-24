@@ -26,6 +26,17 @@ export PATH="$JDK/bin:$PATH"
 
 rm -rf "$WORK"
 mkdir -p "$SRC" "$OUT/gen" "$OUT/classes" "$OUT/dex"
+
+# 版本号从 build.gradle 读，别在脚本里另写一份（迟早忘了同步）
+VER=$(grep -oE 'versionName[[:space:]]+"[^"]+"' "$ROOT/app/build.gradle" \
+      | sed -E 's/.*"([^"]+)".*/\1/' | head -1)
+CODE=$(grep -oE 'versionCode[[:space:]]+[0-9]+' "$ROOT/app/build.gradle" \
+      | grep -oE '[0-9]+' | head -1)
+[ -n "$VER" ] && [ -n "$CODE" ] || { echo "读不到版本号，检查 app/build.gradle"; exit 1; }
+APK="$ROOT/releases/看得清-$VER.apk"
+mkdir -p "$ROOT/releases"
+echo "版本：$VER (versionCode $CODE) → releases/看得清-$VER.apk"
+
 cp -r "$ROOT/app/src/main/." "$SRC/"
 
 echo "== 1/6 aapt2 compile =="
@@ -39,8 +50,8 @@ echo "== 2/6 aapt2 link =="
   --java "$OUT/gen" \
   --min-sdk-version 24 \
   --target-sdk-version 29 \
-  --version-code 3 \
-  --version-name 2.1 \
+  --version-code "$CODE" \
+  --version-name "$VER" \
   "$OUT/res.zip"
 
 echo "== 3/6 javac =="
@@ -73,9 +84,9 @@ fi
   --ks-pass pass:android --key-pass pass:android \
   --out "$OUT/kanqing.apk" aligned.apk
 
-cp "$OUT/kanqing.apk" "$ROOT/看得清.apk"
+cp "$OUT/kanqing.apk" "$APK"
 
 echo "== 校验 =="
-"$BT/aapt2.exe" dump badging "$ROOT/看得清.apk" | head -4
-"$JDK/bin/java.exe" -jar "$BT/lib/apksigner.jar" verify --print-certs "$ROOT/看得清.apk" | head -2
-ls -lh "$ROOT/看得清.apk"
+"$BT/aapt2.exe" dump badging "$APK" | head -4
+"$JDK/bin/java.exe" -jar "$BT/lib/apksigner.jar" verify --print-certs "$APK" | head -2
+ls -lh "$APK"
