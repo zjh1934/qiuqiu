@@ -92,7 +92,16 @@ public class Prefs {
 
     /** 放大倍率，1.5 ~ 5.0 */
     public float scale() {
-        return sp.getFloat(K_SCALE, 2.5f);
+        // 夹到有效区间：早期版本可能存过 1.0，
+        // 那样"按住球"会亮起放大外环、画面却纹丝不动，看着像坏了
+        float v = sp.getFloat(K_SCALE, 2.5f);
+        if (v < 1.5f) {
+            return 1.5f;
+        }
+        if (v > 5.0f) {
+            return 5.0f;
+        }
+        return v;
     }
 
     public void setScale(float v) {

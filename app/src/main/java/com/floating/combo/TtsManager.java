@@ -84,6 +84,9 @@ public class TtsManager {
         void onDone();
 
         void onError();
+
+        /** 又读完了一段（不是最后一段）。长文靠它续命，别被超时打断 */
+        void onChunk();
     }
 
     public static void setListener(OnInitListener l) {
@@ -159,8 +162,9 @@ public class TtsManager {
         }
 
         // 兜底：实例查询
+        TextToSpeech probe = null;
         try {
-            TextToSpeech probe = new TextToSpeech(ctx.getApplicationContext(), null);
+            probe = new TextToSpeech(ctx.getApplicationContext(), null);
             List<TextToSpeech.EngineInfo> es = probe.getEngines();
             Log.i("tts", "getEngines() 命中 " + (es == null ? 0 : es.size()) + " 个");
             if (es != null) {
@@ -175,8 +179,15 @@ public class TtsManager {
                     out.add(new Engine(label, e.name));
                 }
             }
-            probe.shutdown();
         } catch (Exception ignored) {
+        } finally {
+            // 原来 shutdown 写在 try 里，getEngines() 一抛异常就永远绑着这个实例
+            if (probe != null) {
+                try {
+                    probe.shutdown();
+                } catch (Exception ignored) {
+                }
+            }
         }
         return out;
     }
@@ -287,7 +298,13 @@ public class TtsManager {
                     l = Locale.CHINA;
                 }
             }
-            tts.setLanguage(l);
+            int r = tts.setLanguage(l);
+            if (r == TextToSpeech.LANG_MISSING_DATA
+                    || r == TextToSpeech.LANG_NOT_SUPPORTED) {
+                // 设了不支持的语言，speak 会直接 ERROR，
+                // 用户看到的是"朗读失败"，不如退回中文
+                return setup(tts);
+            }
             return true;
         } catch (Exception e) {
             return false;
@@ -510,7 +527,11 @@ public class TtsManager {
             return;
         }
         if (!isLastChunk(id)) {
-            return;     // 后面还有片段，别急着收状态
+            // 后面还有片段：告诉上层"还在念"，让它把超时往后推
+            if (speechListener != null) {
+                speechListener.onChunk();
+            }
+            return;
         }
         notifyEnd(false);
     }
@@ -609,8 +630,8 @@ public class TtsManager {
             if (parts.isEmpty()) {
                 return false;
             }
-            int mySession = ++session;
-            chunkTotal = parts.size();
+            chunkTotal = parts.size();      // 先写总段数
+            int mySession = ++session;      // 再写会话号（volatile 写，前面的写对它可见）
             Log.i("tts", "speak " + text.length() + " 字 → " + parts.size()
                     + " 段 rate=" + rate + " pitch=" + pitch);
             for (int i = 0; i < parts.size(); i++) {
@@ -626,8 +647,14 @@ public class TtsManager {
                 }
                 if (r != TextToSpeech.SUCCESS) {
                     Log.e("tts", "引擎拒收第 " + i + " 段，返回 " + r);
-                    session++;      // 作废这一批已经排进去的
+                    session++;      // 作废这一批的回调
                     chunkTotal = 0;
+                    // 前面几段可能已经在念了。不 stop 的话：
+                    // 界面回待命、声音还在响，用户再点一次就叠音
+                    try {
+                        tts.stop();
+                    } catch (Exception ignored) {
+                    }
                     return false;
                 }
             }

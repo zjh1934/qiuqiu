@@ -292,7 +292,7 @@ def join(segs, pick):
 def join_below(segs, y):
     sink = Sink()
     for n in segs:
-        if n.top < y:
+        if n.bottom <= y:
             continue
         sink.add(n.text)
     return sink.text()

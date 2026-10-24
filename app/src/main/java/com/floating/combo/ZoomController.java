@@ -29,6 +29,8 @@ public class ZoomController {
 
     private int screenW = 0, screenH = 0;
     private float curScale = 1f;
+    /** 已经下发给系统的倍率，避免每帧重复设置 */
+    private float appliedScale = 0f;
     private float curCx = 0, curCy = 0;
     private boolean zoomOn = false;
 
@@ -64,6 +66,7 @@ public class ZoomController {
     public void zoomOut() {
         curScale = 1f;
         zoomOn = false;
+        appliedScale = 0f;      // 下次放大要重新下发倍率
         reset(false);
     }
 
@@ -118,7 +121,12 @@ public class ZoomController {
             return;
         }
         try {
-            c.setScale(curScale, animate);
+            // 倍率在一次放大里是恒定的，每帧重复 setScale 会让部分 ROM 的
+            // 放大动画不断重置，拖动明显掉帧
+            if (Math.abs(appliedScale - curScale) > 0.01f) {
+                c.setScale(curScale, animate);
+                appliedScale = curScale;
+            }
             c.setCenter(curCx, curCy, animate);
         } catch (Exception ignored) {
         }

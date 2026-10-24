@@ -90,6 +90,23 @@ public class BallController implements View.OnTouchListener {
         measure();
     }
 
+    /**
+     * 屏幕尺寸变了（旋转 / 分屏 / 折叠屏展开）之后必须重算，
+     * 否则 clamp 还按旧尺寸算，球可能停在屏幕外，用户再也点不到。
+     */
+    public void remeasure() {
+        measure();
+        if (view == null || lp == null) {
+            return;
+        }
+        lp.x = clampX(lp.x, lp.width);
+        lp.y = clampY(lp.y, lp.height);
+        commit();
+        if (cb != null) {
+            cb.onMoved(lp.x, lp.y);
+        }
+    }
+
     private void measure() {
         try {
             DisplayMetrics dm = new DisplayMetrics();
@@ -220,6 +237,11 @@ public class BallController implements View.OnTouchListener {
             wm.addView(view, lp);
         } catch (Exception e) {
             Log.e("ball", "球提到上层失败", e);
+            // remove 已经生效、add 却失败：球就这样凭空消失了。
+            // 重建一次，别让用户"点一下球，球没了"
+            view = null;
+            lp = null;
+            show();
         }
     }
 

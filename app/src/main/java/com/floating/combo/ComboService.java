@@ -7,14 +7,17 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.os.Build;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.Looper;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
 import android.widget.Toast;
@@ -53,6 +56,9 @@ public class ComboService extends AccessibilityService
     private boolean overlayAdded = false;
 
     private final Handler h = new Handler(Looper.getMainLooper());
+    /** 抓字放在后台线程：一屏几千个节点，主线程做会直接 ANR */
+    private HandlerThread grabThread;
+    private Handler grabH;
     private int state = ST_IDLE;
     private boolean zooming = false;
 
@@ -96,6 +102,21 @@ public class ComboService extends AccessibilityService
         Haptics.init(getApplicationContext(), prefs.haptics());
         TtsManager.setSpeechListener(new TtsManager.SpeechListener() {
             @Override
+            public void onChunk() {
+                h.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (state != ST_SPEAKING) {
+                            return;
+                        }
+                        // 还在念就续命：长文章靠这个一直续下去，不会被硬超时截断
+                        h.removeCallbacks(speakWatchdog);
+                        h.postDelayed(speakWatchdog, 120000);
+                    }
+                });
+            }
+
+            @Override
             public void onDone() {
                 h.post(new Runnable() {
                     @Override
@@ -134,12 +155,45 @@ public class ComboService extends AccessibilityService
         }
     }
 
+    /**
+     * 选字态只是"点一下屏幕"的临时状态，不该跨 App 存活。
+     * 用户切走 / 锁屏 / 弹系统框时把覆盖层收掉，
+     * 否则一层透明窗口会一直挂在那儿吃掉所有触摸。
+     */
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
+        if (event == null || state != ST_PICKING) {
+            return;
+        }
+        if (event.getEventType() != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            return;
+        }
+        CharSequence pkg = event.getPackageName();
+        if (pkg != null && getPackageName().contentEquals(pkg)) {
+            return;     // 是我们自己的界面（比如打开了 App），不动
+        }
+        Log.i("pick", "窗口切走了，退出选字态");
+        pickSeq++;
+        removeOverlay();
+        toIdle();
     }
 
     @Override
     public void onInterrupt() {
+    }
+
+    /** 旋转 / 分屏 / 折叠屏展开：球和放大的坐标系都得重算 */
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        if (ball == null) {
+            return;
+        }
+        ball.remeasure();
+        if (zoom != null) {
+            zoom.setScreen(ball.screenW(), ball.screenH());
+        }
+        ball.applyPrefs();
     }
 
     private void doRefresh() {
@@ -184,6 +238,11 @@ public class ComboService extends AccessibilityService
         }
         if (grabber == null) {
             grabber = new TextGrabber(this);
+        }
+        if (grabThread == null) {
+            grabThread = new HandlerThread("grab");
+            grabThread.start();
+            grabH = new Handler(grabThread.getLooper());
         }
         if (ball == null) {
             ball = new BallController(this, prefs, zoom, this);
@@ -232,7 +291,13 @@ public class ComboService extends AccessibilityService
     @Override
     public void onZoomStart(float fx, float fy) {
         Log.state(stName(state), stName(ST_IDLE), "要放大，先清干净");
+        boolean wasSpeaking = (state == ST_SPEAKING);
         stopSpeakingInternal();
+        if (wasSpeaking) {
+            // 只改状态不够：有的引擎会吞掉 stop()，得补一次兜底
+            h.removeCallbacks(forceStopTask);
+            h.postDelayed(forceStopTask, 800);
+        }
         pickSeq++;      // 作废可能还在排队的抓字任务
         removeOverlay();
         state = ST_IDLE;
@@ -312,6 +377,8 @@ public class ComboService extends AccessibilityService
         }
         addOverlay();
         Haptics.ready();
+        h.removeCallbacks(pickTimeout);
+        h.postDelayed(pickTimeout, 8000);
     }
 
     @Override
@@ -328,6 +395,8 @@ public class ComboService extends AccessibilityService
             Log.state(stName(state), stName(ST_IDLE), "toIdle");
         }
         h.removeCallbacks(speakWatchdog);
+        h.removeCallbacks(pickTimeout);
+        h.removeCallbacks(forceStopTask);
         state = ST_IDLE;
         if (ball != null) {
             ball.resetLook();
@@ -362,9 +431,11 @@ public class ComboService extends AccessibilityService
         if (rate < 0.1f) {
             rate = 1f;
         }
-        long ms = (long) (chars * 400L / rate) + 8000L;
-        if (ms > 10L * 60L * 1000L) {
-            ms = 10L * 60L * 1000L;
+        // 300ms/字：中文正常语速 4~5 字/秒，给足余量；
+        // 上限 30 分钟只是防"永远不回调"，真正的长文靠 onChunk 每段续命
+        long ms = (long) (chars * 300L / rate) + 8000L;
+        if (ms > 30L * 60L * 1000L) {
+            ms = 30L * 60L * 1000L;
         }
         return (int) ms;
     }
@@ -406,12 +477,36 @@ public class ComboService extends AccessibilityService
     private final Runnable forceStopTask = new Runnable() {
         @Override
         public void run() {
+            // 用户正在选字（停完又点了球），这时候重建引擎会让 isReady() 变 false，
+            // 他点字就只听到"引擎还没准备好"。往后挪，等他不选了再说。
+            if (state == ST_PICKING) {
+                h.postDelayed(this, 1500);
+                return;
+            }
             TtsManager.forceStop();
         }
     };
 
-    private void readAt(int x, int y) {
-        if (grabber == null) {
+    /**
+     * 选取态超时兜底。
+     * 覆盖层是全屏的，只要它还在，用户点哪儿都没反应。
+     * 万一系统把 UP 事件吞了（滑动返回、锁屏、来电），必须自己退出来。
+     */
+    private final Runnable pickTimeout = new Runnable() {
+        @Override
+        public void run() {
+            if (state != ST_PICKING) {
+                return;
+            }
+            Log.w("pick", "选取态超时，强制退出");
+            pickSeq++;
+            removeOverlay();
+            toIdle();
+        }
+    };
+
+    private void readAt(final int x, final int y) {
+        if (grabber == null || grabH == null) {
             return;
         }
         if (!TtsManager.isReady()) {
@@ -422,12 +517,46 @@ public class ComboService extends AccessibilityService
         }
         // 上一次"停止"排队的兜底重建会在 1.5 秒后跑：如果这中间用户又点了一句，
         // 它会把刚开始的朗读直接掐掉（release + bind），听着就是"读两个字就没声了"。
-        // 新的一次朗读开始，就把那个兜底撤掉。
         h.removeCallbacks(forceStopTask);
-        // grabFrom 内部已经兜过 grabAt，这里不用再来一遍
-        String text = grabber.grabFrom(x, y);
+
+        final int seq = pickSeq;
+        // 抓字是一屏几千个节点、每个节点好几次跨进程调用，放主线程会 ANR
+        grabH.post(new Runnable() {
+            @Override
+            public void run() {
+                String got;
+                try {
+                    // grabFrom 内部已经兜过 grabAt
+                    got = grabber.grabFrom(x, y);
+                } catch (Throwable t) {
+                    Log.e("grab", "抓字抛异常", t);
+                    got = null;
+                }
+                final String text = got;
+                h.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        startSpeak(text, seq);
+                    }
+                });
+            }
+        });
+    }
+
+    /** 抓完回到主线程：复核状态没变，再交给引擎 */
+    private void startSpeak(String text, int seq) {
+        if (seq != pickSeq || state != ST_PICKING) {
+            Log.i("pick", "抓字回来时状态已变，丢弃");
+            return;
+        }
+        if (!TtsManager.isReady()) {
+            toast("语音引擎还没准备好");
+            Haptics.error();
+            toIdle();
+            return;
+        }
         if (text == null || text.trim().length() == 0) {
-            Log.w("grab", "(" + x + "," + y + ") 什么都没抓到");
+            Log.w("grab", "什么都没抓到");
             toast("这里没读到文字");
             Haptics.error();
             toIdle();
@@ -451,6 +580,22 @@ public class ComboService extends AccessibilityService
         // 引擎万一不回调，也要能从"两竖"里退出来
         h.removeCallbacks(speakWatchdog);
         h.postDelayed(speakWatchdog, guardMs(text.length()));
+    }
+
+    /** 界面上的"试听"要占用引擎，先把球这边的朗读停掉，别两边抢 */
+    public static void stopBallSpeaking() {
+        final ComboService s = instance;
+        if (s == null) {
+            return;
+        }
+        s.h.post(new Runnable() {
+            @Override
+            public void run() {
+                if (s.state == ST_SPEAKING) {
+                    s.stopSpeaking();
+                }
+            }
+        });
     }
 
     // ---------- 选取态覆盖层 ----------
@@ -481,30 +626,68 @@ public class ComboService extends AccessibilityService
         overlayLp.y = 0;
 
         overlay.setOnTouchListener(new View.OnTouchListener() {
+            private float downX, downY;
+            private final int slop = ViewConfiguration.get(ComboService.this)
+                    .getScaledTouchSlop();
+
             @Override
             public boolean onTouch(View v, MotionEvent e) {
-                if (e.getActionMasked() == MotionEvent.ACTION_UP) {
-                    final int x = (int) e.getRawX();
-                    final int y = (int) e.getRawY();
-                    removeOverlay();
-                    final int seq = pickSeq;
-                    // 等覆盖层撤掉、窗口恢复常态再抓，否则可能抓到自己的覆盖层
-                    h.postDelayed(new Runnable() {
-                        @Override
-                        public void run() {
-                            // 这 250ms 里球可能又被点了（取消选取 / 要放大），
-                            // 那这次屏幕点击就作废，别再读出来
-                            if (seq != pickSeq || state != ST_PICKING) {
-                                Log.i("pick", "点击已作废（期间状态变了），跳过抓字");
-                                return;
-                            }
-                            readAt(x, y);
+                switch (e.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        downX = e.getRawX();
+                        downY = e.getRawY();
+                        return true;
+
+                    case MotionEvent.ACTION_MOVE:
+                        // 手指划开了 = 他想滚屏，不是想读这里
+                        if (Math.abs(e.getRawX() - downX) > slop
+                                || Math.abs(e.getRawY() - downY) > slop) {
+                            Log.i("pick", "滑动，取消本次选取");
+                            cancelPick();
                         }
-                    }, 250);
+                        return true;
+
+                    case MotionEvent.ACTION_CANCEL:
+                        // 滑动返回 / 锁屏 / 来电 / 分屏：系统只发 CANCEL 不发 UP。
+                        // 老代码只认 UP，一旦 CANCEL 就再也收不到 UP，
+                        // 全屏覆盖层会一直挂在那儿，整块屏幕都点不动。
+                        Log.w("pick", "触摸被系统取消，退出选字态");
+                        cancelPick();
+                        return true;
+
+                    case MotionEvent.ACTION_UP: {
+                        final int x = (int) e.getRawX();
+                        final int y = (int) e.getRawY();
+                        removeOverlay();
+                        final int seq = pickSeq;
+                        // 等覆盖层撤掉、窗口恢复常态再抓，否则可能抓到自己的覆盖层
+                        h.postDelayed(new Runnable() {
+                            @Override
+                            public void run() {
+                                // 这 250ms 里球可能又被点了（取消选取 / 要放大），
+                                // 那这次屏幕点击就作废，别再读出来
+                                if (seq != pickSeq || state != ST_PICKING) {
+                                    Log.i("pick", "点击已作废（期间状态变了），跳过抓字");
+                                    return;
+                                }
+                                readAt(x, y);
+                            }
+                        }, 250);
+                        return true;
+                    }
+
+                    default:
+                        return true;
                 }
-                return true;
             }
         });
+    }
+
+    /** 取消选字：作废排队中的抓字任务，收掉覆盖层，回待命 */
+    private void cancelPick() {
+        pickSeq++;
+        removeOverlay();
+        toIdle();
     }
 
     private void addOverlay() {
@@ -527,6 +710,11 @@ public class ComboService extends AccessibilityService
         } catch (Exception e) {
             Log.e("pick", "覆盖层加不上", e);
             toIdle();
+            // bringToFront 里是 remove+add，add 失败球就不在窗口上了，
+            // 用户会看到"球凭空消失"，这里补一次
+            if (ball != null && !ball.isShown()) {
+                ball.show();
+            }
         }
     }
 
@@ -600,17 +788,27 @@ public class ComboService extends AccessibilityService
 
     @Override
     public boolean onUnbind(Intent intent) {
-        closeAll();
-        TtsManager.release();
-        instance = null;
+        teardown();
         return super.onUnbind(intent);
     }
 
     @Override
     public void onDestroy() {
-        closeAll();
-        TtsManager.release();
-        instance = null;
+        teardown();
         super.onDestroy();
+    }
+
+    /** 收尾：窗口、引擎、线程、静态引用全部断开 */
+    private void teardown() {
+        closeAll();
+        // 静态的监听器攥着 this，不清掉整个 Service 都回收不了
+        TtsManager.setSpeechListener(null);
+        TtsManager.release();
+        if (grabThread != null) {
+            grabThread.quit();
+            grabThread = null;
+            grabH = null;
+        }
+        instance = null;
     }
 }

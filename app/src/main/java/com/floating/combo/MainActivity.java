@@ -5,6 +5,7 @@ import android.content.ClipData;
 import android.content.Context;
 import android.content.ClipboardManager;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.PorterDuff;
@@ -68,6 +69,7 @@ public class MainActivity extends Activity
     // 朗读页
     private Spinner spEngine, spVoice;
     private TextView tvRate, tvPitch, tvEngineInfo;
+    private boolean enginesLoaded = false;
     private List<TtsManager.Engine> engines = new ArrayList<TtsManager.Engine>();
     private List<TtsManager.Voice> voices = new ArrayList<TtsManager.Voice>();
     /** 界面上当前显示的是哪个引擎 / 音色，用来识别"程序设置"引起的选择回调 */
@@ -153,7 +155,12 @@ public class MainActivity extends Activity
     protected void onResume() {
         super.onResume();
         refreshStatus();
-        reloadEngines();
+        if (!enginesLoaded) {
+            // 每次 onResume 都重建会 new 一个 TTS 探针并同步 IPC，回到前台会卡一下。
+            // 引擎列表只有装了/卸了语音引擎才会变，进页面时取一次就够。
+            enginesLoaded = true;
+            reloadEngines();
+        }
     }
 
     @Override
@@ -589,6 +596,9 @@ public class MainActivity extends Activity
                     toast("引擎还没准备好，等一两秒");
                     return;
                 }
+                // 球正在朗读时共用同一个引擎：不先停掉，
+                // 球的状态会被这次试听的回调改掉，而且两段声音会叠在一起
+                ComboService.stopBallSpeaking();
                 TtsManager.speak("这是一句试听，声音正常就可以用了", prefs.rate(), prefs.pitch());
             }
         });
@@ -848,6 +858,7 @@ public class MainActivity extends Activity
                     @Override
                     public void on(int v) {
                         prefs.setIdleAlpha(v / 100f);
+                        ComboService.refresh();   // 不刷的话屏幕上的球不会立刻变
                     }
                 }));
         page.addView(c1, lp(0, 0, 0, dp(12)));
@@ -1032,6 +1043,31 @@ public class MainActivity extends Activity
         return page;
     }
 
+    private static final int REQ_EXPORT = 71;
+
+    private void doExport() {
+        String p = Log.export(MainActivity.this);
+        if (p == null) {
+            toast("导出失败，可能还没产生日志");
+        } else {
+            toast("已导出到：\n" + p);
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int code, String[] perms, int[] res) {
+        super.onRequestPermissionsResult(code, perms, res);
+        if (code != REQ_EXPORT) {
+            return;
+        }
+        if (res.length > 0 && res[0] == PackageManager.PERMISSION_GRANTED) {
+            doExport();
+        } else {
+            toast("没给存储权限，日志会存到应用自己的目录里");
+            doExport();
+        }
+    }
+
     private String versionName() {
         try {
             return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
@@ -1113,12 +1149,15 @@ public class MainActivity extends Activity
         bExport.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                String p = Log.export(MainActivity.this);
-                if (p == null) {
-                    toast("导出失败，可能还没产生日志");
-                } else {
-                    toast("已导出到：\n" + p);
+                // Android 10 以下写公共下载目录要运行时权限，没有就直接写私有目录
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
+                        && checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                        != PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(new String[]{
+                            android.Manifest.permission.WRITE_EXTERNAL_STORAGE}, REQ_EXPORT);
+                    return;
                 }
+                doExport();
             }
         });
         row.addView(bExport);

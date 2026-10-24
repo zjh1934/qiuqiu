@@ -34,7 +34,8 @@ public class Log {
     /** 文件超过 150KB 就砍掉前面一半，防止越用越撑 */
     private static final int MAX_BYTES = 150 * 1024;
     /** 界面上最多渲染多少行，防止 TextView 撑爆 */
-    public static final int MAX_RENDER = 200;
+    /** 和 recent 里保留的条数保持一致，否则"显示全部"名不副实 */
+    public static final int MAX_RENDER = 60;
     private static final int MAX_LINES = 3000;
 
     private static File file = null;

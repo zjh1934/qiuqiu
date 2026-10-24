@@ -399,7 +399,9 @@ public class TextGrabber {
         Sink s = new Sink();
         for (int i = 0; i < segs.size(); i++) {
             TextLayout.Node n = segs.get(i);
-            if (n.top < y) {
+            // 用 bottom 判：整段都在点击点上方才跳过。
+            // 用 top 判会把"点击点落在这段中间"的那一段整个漏掉
+            if (n.bottom <= y) {
                 continue;
             }
             s.add(n.text);
