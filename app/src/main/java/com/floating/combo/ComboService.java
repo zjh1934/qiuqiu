@@ -310,6 +310,9 @@ public class ComboService extends AccessibilityService
         if (ball != null) {
             ball.setState(BallView.ST_ACTIVE);
         }
+        // 画面刚变大的这一下就震。用户"感觉到震动" = 放大已经生效，
+        // 不用低头确认球亮没亮。原来这里一次都没震过，等于没接上。
+        Haptics.zoom();
     }
 
     @Override
@@ -321,6 +324,7 @@ public class ComboService extends AccessibilityService
 
     @Override
     public void onZoomEnd() {
+        // 这里刻意不震：缩放结束是"回到原状"，不需要再确认一次
         Log.i("zoom", "放大结束，球退回原位");
         zooming = false;
         if (zoom != null) {

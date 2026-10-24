@@ -935,7 +935,9 @@ public class MainActivity extends Activity
                 Haptics.setEnabled(prefs.haptics());
                 updateHapticText();
                 if (prefs.haptics()) {
-                    Haptics.ready();     // 开的时候震一下，让他知道震感是什么样
+                    // 开的时候先震"按住放大"的那一下：这是最重要的一次触感，
+                    // 让他当场确认这个功能真的接上了
+                    Haptics.zoom();
                 }
                 ComboService.refresh();
             }
@@ -1088,14 +1090,14 @@ public class MainActivity extends Activity
 
     private void updateHapticText() {
         if (!Haptics.available()) {
-            btnHaptic.setText("点按时震一下：这台手机不支持");
+            btnHaptic.setText("震动反馈：这台手机不支持");
             btnHaptic.setEnabled(false);
             btnHaptic.setAlpha(0.45f);
             return;
         }
         btnHaptic.setEnabled(true);
         btnHaptic.setAlpha(1f);
-        btnHaptic.setText("点按时震一下：" + (prefs.haptics() ? "开" : "关"));
+        btnHaptic.setText("震动反馈：" + (prefs.haptics() ? "开" : "关"));
     }
 
     // ---------- 诊断与日志（折叠，默认只露一个小入口） ----------
