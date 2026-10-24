@@ -491,30 +491,42 @@ public class TtsManager {
      * 回调在引擎的线程上，累加计数会有竞态，错了就是状态永远卡在"朗读中"。
      */
     private static void onChunkEnd(String id, boolean error) {
-        if (!isCurrentSession(id)) {
+        int s = sessionOf(id);
+        if (s == -1) {
+            // 引擎没回传我们给的那个 id（个别第三方引擎会这样）。
+            // 这种回调没法判断属于哪一次，只能当成"当前这次结束了" ——
+            // 丢弃的话球会永远停在"两竖"（朗读中），比偶尔早一帧收尾严重得多。
+            Log.w("tts", "回调没有可识别的 id，按本次结束处理：" + id);
+            notifyEnd(error);
+            return;
+        }
+        if (s != session) {
             Log.i("tts", "丢弃旧会话的回调 id=" + id);
             return;
         }
         if (error) {
             // 出错就别等了：后面排队的片段很可能已经被引擎丢掉
-            if (speechListener != null) {
-                speechListener.onError();
-            }
+            notifyEnd(true);
             return;
         }
         if (!isLastChunk(id)) {
             return;     // 后面还有片段，别急着收状态
         }
-        if (speechListener != null) {
+        notifyEnd(false);
+    }
+
+    private static void notifyEnd(boolean error) {
+        if (speechListener == null) {
+            return;
+        }
+        if (error) {
+            speechListener.onError();
+        } else {
             speechListener.onDone();
         }
     }
 
     /** id 形如 "3#0"，# 前面是会话号，后面是第几段 */
-    private static boolean isCurrentSession(String id) {
-        return sessionOf(id) == session;
-    }
-
     private static boolean isLastChunk(String id) {
         int i = (id == null) ? -1 : id.indexOf('#');
         if (i < 0) {

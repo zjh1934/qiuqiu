@@ -318,10 +318,46 @@ public class ComboService extends AccessibilityService
         if (state != ST_IDLE) {
             Log.state(stName(state), stName(ST_IDLE), "toIdle");
         }
+        h.removeCallbacks(speakWatchdog);
         state = ST_IDLE;
         if (ball != null) {
             ball.resetLook();
         }
+    }
+
+    /**
+     * 朗读看门狗。
+     *
+     * 球的"两竖"= 朗读中。这个状态只有引擎回调 onDone 才会退出。
+     * 但引擎是会失约的：被系统冻结、语音数据没装、第三方引擎吞掉回调……
+     * 一旦不回调，球就永远停在"两竖"，用户点它也没用（点了还是在朗读态里打转）。
+     * 所以给每次朗读按字数配一个超时，到点强制归位。
+     *
+     * 估计得宽一点：宁可晚几十秒，也不能把正在读的长文章截断。
+     */
+    private final Runnable speakWatchdog = new Runnable() {
+        @Override
+        public void run() {
+            if (state != ST_SPEAKING) {
+                return;
+            }
+            Log.w("tts", "朗读超时没有回调，强制回到待命");
+            TtsManager.stop();
+            toIdle();
+        }
+    };
+
+    /** 按字数和语速估算"这句最多该读多久" */
+    private int guardMs(int chars) {
+        float rate = prefs.rate();
+        if (rate < 0.1f) {
+            rate = 1f;
+        }
+        long ms = (long) (chars * 400L / rate) + 8000L;
+        if (ms > 10L * 60L * 1000L) {
+            ms = 10L * 60L * 1000L;
+        }
+        return (int) ms;
     }
 
     /** 只读内部状态归位，不碰引擎 */
@@ -403,6 +439,9 @@ public class ComboService extends AccessibilityService
             ball.setState(BallView.ST_SPEAKING);
         }
         Haptics.speak();
+        // 引擎万一不回调，也要能从"两竖"里退出来
+        h.removeCallbacks(speakWatchdog);
+        h.postDelayed(speakWatchdog, guardMs(text.length()));
     }
 
     // ---------- 选取态覆盖层 ----------
