@@ -84,6 +84,7 @@ public class ComboService extends AccessibilityService
         initOnce();
 
         TtsManager.init(getApplicationContext());
+        Haptics.init(getApplicationContext(), prefs.haptics());
         TtsManager.setSpeechListener(new TtsManager.SpeechListener() {
             @Override
             public void onDone() {
@@ -136,6 +137,7 @@ public class ComboService extends AccessibilityService
         if (prefs == null) {
             return;
         }
+        Haptics.setEnabled(prefs.haptics());
         if (!prefs.ballOn()) {
             closeAll();
             return;
@@ -275,6 +277,7 @@ public class ComboService extends AccessibilityService
         }
         if (state == ST_PICKING) {
             Log.i("pick", "选取态再点球 → 取消");
+            Haptics.tap();
             removeOverlay();
             toIdle();
             return;
@@ -283,7 +286,14 @@ public class ComboService extends AccessibilityService
             String why = TtsManager.isFailed() ? "初始化失败" : "还在初始化";
             Log.w("tts", "想进选取态但引擎不可用：" + why
                     + " pkg=" + TtsManager.getCurrentPkg());
-            toast(TtsManager.isFailed() ? "语音引擎初始化失败" : "语音引擎还在初始化，等一两秒");
+            if (TtsManager.isFailed()) {
+                // 失败之后原来只能重启 App，这里给一次自愈的机会
+                TtsManager.retryIfFailed();
+                toast("语音引擎初始化失败，正在重新连接…");
+            } else {
+                toast("语音引擎还在初始化，等一两秒");
+            }
+            Haptics.error();
             return;
         }
         Log.state(stName(state), stName(ST_PICKING), "轻点球");
@@ -292,6 +302,7 @@ public class ComboService extends AccessibilityService
             ball.setState(BallView.ST_PICKING);
         }
         addOverlay();
+        Haptics.ready();
     }
 
     @Override
@@ -330,6 +341,7 @@ public class ComboService extends AccessibilityService
     private void stopSpeaking() {
         TtsManager.stop();
         toIdle();
+        Haptics.tap();
         h.removeCallbacks(forceStopTask);
         h.postDelayed(forceStopTask, 1500);
     }
@@ -359,14 +371,20 @@ public class ComboService extends AccessibilityService
         }
         if (!TtsManager.isReady()) {
             toast("语音引擎还没准备好");
+            Haptics.error();
             toIdle();
             return;
         }
+        // 上一次"停止"排队的兜底重建会在 1.5 秒后跑：如果这中间用户又点了一句，
+        // 它会把刚开始的朗读直接掐掉（release + bind），听着就是"读两个字就没声了"。
+        // 新的一次朗读开始，就把那个兜底撤掉。
+        h.removeCallbacks(forceStopTask);
         // grabFrom 内部已经兜过 grabAt，这里不用再来一遍
         String text = grabber.grabFrom(x, y);
         if (text == null || text.trim().length() == 0) {
             Log.w("grab", "(" + x + "," + y + ") 什么都没抓到");
             toast("这里没读到文字");
+            Haptics.error();
             toIdle();
             return;
         }
@@ -375,6 +393,7 @@ public class ComboService extends AccessibilityService
         boolean ok = TtsManager.speak(text, prefs.rate(), prefs.pitch());
         if (!ok) {
             toast("朗读失败");
+            Haptics.error();
             toIdle();
             return;
         }
@@ -383,6 +402,7 @@ public class ComboService extends AccessibilityService
         if (ball != null) {
             ball.setState(BallView.ST_SPEAKING);
         }
+        Haptics.speak();
     }
 
     // ---------- 选取态覆盖层 ----------
@@ -484,21 +504,21 @@ public class ComboService extends AccessibilityService
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 String id = "combo_ball";
                 NotificationChannel ch = new NotificationChannel(
-                        id, "球球", NotificationManager.IMPORTANCE_LOW);
+                        id, "看得清", NotificationManager.IMPORTANCE_LOW);
                 NotificationManager nm =
                         (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
                 if (nm != null) {
                     nm.createNotificationChannel(ch);
                 }
                 n = new Notification.Builder(this, id)
-                        .setContentTitle("球球运行中")
+                        .setContentTitle("看得清运行中")
                         .setContentText("点球选字朗读 · 按住放大")
                         .setSmallIcon(android.R.drawable.ic_btn_speak_now)
                         .setContentIntent(pi)
                         .build();
             } else {
                 n = new Notification.Builder(this)
-                        .setContentTitle("球球运行中")
+                        .setContentTitle("看得清运行中")
                         .setContentText("点球选字朗读 · 按住放大")
                         .setSmallIcon(android.R.drawable.ic_btn_speak_now)
                         .setContentIntent(pi)

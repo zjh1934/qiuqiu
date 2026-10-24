@@ -31,8 +31,10 @@ public class Prefs {
     private static final String K_SNAP = "snap";
     private static final String K_COMP = "compensate";
     private static final String K_BALL_X = "ball_x";
+    private static final String K_BALL_Y = "ball_y";
     private static final String K_RATE = "rate";
     private static final String K_PITCH = "pitch";
+    private static final String K_HAPTIC = "haptic";
 
     private final SharedPreferences sp;
 
@@ -129,16 +131,27 @@ public class Prefs {
         sp.edit().putBoolean(K_COMP, v).apply();
     }
 
+    /**
+     * 球存过位置没有。
+     *
+     * 不能拿 -1 当"没存过"的哨兵：贴左边时窗口 x 本来就是负数
+     * （clampX 允许到 -size/2），存进去之后会被误判成"没设置过"，
+     * 下次启动球就自己跑回右边 —— 用户明明把它挪到左边了。
+     */
+    public boolean hasBallPos() {
+        return sp.contains(K_BALL_X) && sp.contains(K_BALL_Y);
+    }
+
     public int ballX() {
-        return sp.getInt(K_BALL_X, -1);
+        return sp.getInt(K_BALL_X, 0);
     }
 
     public int ballY() {
-        return sp.getInt("ball_y", -1);
+        return sp.getInt(K_BALL_Y, 0);
     }
 
     public void setBallPos(int x, int y) {
-        sp.edit().putInt(K_BALL_X, x).putInt("ball_y", y).apply();
+        sp.edit().putInt(K_BALL_X, x).putInt(K_BALL_Y, y).apply();
     }
 
     /** 语速 0.5 ~ 2.0，1.0 = 正常 */
@@ -157,5 +170,14 @@ public class Prefs {
 
     public void setPitch(float v) {
         sp.edit().putFloat(K_PITCH, v).apply();
+    }
+
+    /** 点按时震一下。低视力看不清球变不变色，靠这个确认点上了 */
+    public boolean haptics() {
+        return sp.getBoolean(K_HAPTIC, true);
+    }
+
+    public void setHaptics(boolean v) {
+        sp.edit().putBoolean(K_HAPTIC, v).apply();
     }
 }

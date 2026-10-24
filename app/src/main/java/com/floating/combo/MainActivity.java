@@ -51,13 +51,16 @@ public class MainActivity extends Activity
     private TextView tvRate, tvPitch, tvEngineInfo;
     private List<TtsManager.Engine> engines = new ArrayList<TtsManager.Engine>();
     private List<TtsManager.Voice> voices = new ArrayList<TtsManager.Voice>();
+    /** 界面上当前显示的是哪个引擎 / 音色，用来识别"程序设置"引起的选择回调 */
+    private String shownEngine = null;
+    private String shownVoice = null;
 
     // 放大页
     private TextView tvScale, tvHold;
 
     // 球页
     private TextView tvSize, tvAlpha, tvIdle;
-    private Button btnSnap, btnComp;
+    private Button btnSnap, btnComp, btnHaptic;
     private int colorIndex = 0;
 
     @Override
@@ -67,6 +70,7 @@ public class MainActivity extends Activity
         colorIndex = prefs.colorIndex();
 
         Log.init(getApplicationContext());
+        Haptics.init(getApplicationContext(), prefs.haptics());
         Log.i("ui", "主界面打开");
 
         ScrollView sv = new ScrollView(this);
@@ -368,6 +372,11 @@ public class MainActivity extends Activity
                 android.R.layout.simple_spinner_dropdown_item, names);
         spEngine.setAdapter(ad);
         spEngine.setSelection(Math.min(sel, names.size() - 1));
+        // 界面上现在代表哪个引擎。setAdapter/setSelection 会触发一次回调，
+        // 那不是"用户换了引擎" —— 不区分的话，每次打开 App 都会把引擎
+        // 切成列表第一项并重连一次，正在进行的朗读会被当场打断。
+        shownEngine = (engines.isEmpty())
+                ? null : engines.get(Math.min(sel, engines.size() - 1)).pkg;
         spEngine.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int pos, long id) {
@@ -375,6 +384,10 @@ public class MainActivity extends Activity
                     return;
                 }
                 String pkg = engines.get(pos).pkg;
+                if (pkg.equals(shownEngine)) {
+                    return;     // 程序设置引起的，不是用户改的
+                }
+                shownEngine = pkg;
                 if (pkg.equals(TtsManager.getSavedEngine(MainActivity.this))) {
                     return;
                 }
@@ -410,14 +423,22 @@ public class MainActivity extends Activity
                 android.R.layout.simple_spinner_dropdown_item, labels);
         spVoice.setAdapter(ad);
         spVoice.setSelection(Math.min(sel, labels.size() - 1));
+        // 同上：程序设置引起的回调不是"用户换了音色"
+        shownVoice = (voices.isEmpty())
+                ? null : voices.get(Math.min(sel, voices.size() - 1)).name;
         spVoice.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int pos, long id) {
                 if (voices == null || pos >= voices.size()) {
                     return;
                 }
-                TtsManager.saveVoice(MainActivity.this, voices.get(pos).name);
-                TtsManager.applyVoice(voices.get(pos).name);
+                String name = voices.get(pos).name;
+                if (name.equals(shownVoice)) {
+                    return;     // 程序设置引起的
+                }
+                shownVoice = name;
+                TtsManager.saveVoice(MainActivity.this, name);
+                TtsManager.applyVoice(name);
             }
 
             @Override
@@ -564,6 +585,22 @@ public class MainActivity extends Activity
         });
         c.addView(btnSnap, lp(0, 0, 0, dp(10)));
 
+        btnHaptic = flatBtn("");
+        updateHapticText();
+        btnHaptic.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                prefs.setHaptics(!prefs.haptics());
+                Haptics.setEnabled(prefs.haptics());
+                updateHapticText();
+                if (prefs.haptics()) {
+                    Haptics.ready();     // 开的时候震一下，让他知道震感是什么样
+                }
+                ComboService.refresh();
+            }
+        });
+        c.addView(btnHaptic, lp(0, 0, 0, dp(10)));
+
         TextView t = new TextView(this);
         t.setText("球颜色");
         t.setTextSize(14);
@@ -641,6 +678,10 @@ public class MainActivity extends Activity
 
     private void updateSnapText() {
         btnSnap.setText("松手后自动贴边：" + (prefs.snapEdge() ? "开" : "关"));
+    }
+
+    private void updateHapticText() {
+        btnHaptic.setText("点按时震一下：" + (prefs.haptics() ? "开" : "关"));
     }
 
     // ---------- 诊断与日志（折叠，默认只露一个小入口） ----------
@@ -823,14 +864,14 @@ public class MainActivity extends Activity
         row.setGravity(Gravity.CENTER_VERTICAL);
 
         TextView title = new TextView(this);
-        title.setText("球球");
+        title.setText("看得清");
         title.setTextSize(26);
         title.setTextColor(Color.WHITE);
         title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         row.addView(title);
 
         TextView badge = new TextView(this);
-        badge.setText(" 2.0 ");
+        badge.setText(" 2.1 ");
         badge.setTextSize(13);
         badge.setTextColor(Color.WHITE);
         badge.setBackgroundDrawable(Theme.rounded(0x33FFFFFF, dp(10), 0, 0));

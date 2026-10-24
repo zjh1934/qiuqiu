@@ -44,6 +44,12 @@ public class TtsManager {
     private static final String PREF = "cfg";
     private static final String KEY_ENGINE = "engine_pkg";
     private static final String KEY_VOICE = "engine_voice";
+    /**
+     * 一次交给引擎的最大字数。
+     * 官方上限 TextToSpeech.getMaxSpeechInputLength() 是 4000，
+     * 超了 speak() 直接返回 ERROR —— 一个字都不念。留 400 的余量。
+     */
+    private static final int MAX_CHUNK = 3600;
 
     private static TextToSpeech tts = null;
     /** 每次重建 +1，用来丢弃旧实例的回调 */
@@ -55,6 +61,19 @@ public class TtsManager {
     private static Context appCtx = null;
     private static OnInitListener listener = null;
     private static SpeechListener speechListener = null;
+
+    /**
+     * 当前朗读会话号。speak() / stop() / release() 都会 +1。
+     *
+     * 长文本被切成几段排队念，引擎逐段回调；被 stop() 打断的旧会话也会回调。
+     * 靠这个号把"不是这一次朗读"的回调全部丢掉 ——
+     * 否则会出现"刚点了一句，读两个字球就跳回待命"。
+     */
+    private static int session = 0;
+    /** 本次会话一共几段。回调里用它判断"是不是最后一段"，不靠计数器累加 */
+    private static int chunkTotal = 0;
+    /** 上次因初始化失败而重试的时间，避免点一下就重连一次 */
+    private static long lastRetry = 0;
 
     public interface OnInitListener {
         void onEngineReady(boolean ready, boolean cnOk, String pkg);
@@ -322,6 +341,13 @@ public class TtsManager {
 
     public static void init(Context ctx) {
         appCtx = ctx.getApplicationContext();
+        // 已经有实例就别重建。
+        // 原来无条件 bind()，会 release 掉服务里那个实例 ——
+        // 表现就是"听着听着打开看得清 App，声音当场就断了"。
+        if (tts != null && !failed) {
+            notifyListener();
+            return;
+        }
         bind();
     }
 
@@ -333,12 +359,31 @@ public class TtsManager {
         bind();
     }
 
+    /**
+     * 初始化失败之后的重试。3 秒内不重复，免得用户连点把引擎反复拉起。
+     * 没有这个入口，引擎一旦初始化失败就只能重启 App 才能恢复。
+     */
+    public static void retryIfFailed() {
+        if (!failed || appCtx == null) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (now - lastRetry < 3000) {
+            return;
+        }
+        lastRetry = now;
+        Log.w("tts", "引擎初始化失败，重试一次");
+        rebind(appCtx);
+    }
+
     private static void bind() {
         if (appCtx == null) {
             return;
         }
         // 先释放旧实例，避免每次 init()/rebuild() 泄漏一个 TTS 引擎
         // （rebind() 知道先 release()，bind() 之前漏了）
+        session++;      // 旧实例的在途回调一并作废
+        chunkTotal = 0;
         if (tts != null) {
             try {
                 tts.stop();
@@ -378,6 +423,13 @@ public class TtsManager {
             }
         };
         String pkg = getSavedEngine(appCtx);
+        if (pkg != null && pkg.length() > 0 && !installed(appCtx, pkg)) {
+            // 存的引擎被卸载了。不清掉的话每次启动都必然初始化失败，
+            // 而且用户完全不知道该去哪儿改 —— 直接退回系统默认
+            Log.w("tts", "保存的引擎已不存在：" + pkg + "，改回系统默认引擎");
+            saveEngine(appCtx, "");
+            pkg = "";
+        }
         try {
             if (pkg != null && pkg.length() > 0) {
                 tts = new TextToSpeech(appCtx, l, pkg);
@@ -390,6 +442,16 @@ public class TtsManager {
             tts = null;
             failed = true;
             Log.e("tts", "new TextToSpeech 抛异常", e);
+        }
+    }
+
+    /** 这个包还在不在 */
+    private static boolean installed(Context ctx, String pkg) {
+        try {
+            ctx.getPackageManager().getPackageInfo(pkg, 0);
+            return true;
+        } catch (Exception e) {
+            return false;
         }
     }
 
@@ -406,24 +468,82 @@ public class TtsManager {
 
                 @Override
                 public void onDone(String id) {
-                    if (speechListener != null) {
-                        speechListener.onDone();
-                    }
+                    onChunkEnd(id, false);
                 }
 
                 @Override
                 public void onError(String id) {
-                    if (speechListener != null) {
-                        speechListener.onError();
-                    }
+                    onChunkEnd(id, true);
                 }
             });
         } catch (Exception ignored) {
         }
     }
 
+    /**
+     * 一段念完了。
+     *
+     * 只有"当前会话的最后一段"才算整次朗读结束：
+     * 长文本会被切成几段排队，引擎一段一段回调；
+     * 并且被 stop() 掉的旧会话也会回调 —— 靠会话号筛掉。
+     *
+     * 判断"最后一段"直接看 id 里的段号，不靠计数器累加 ——
+     * 回调在引擎的线程上，累加计数会有竞态，错了就是状态永远卡在"朗读中"。
+     */
+    private static void onChunkEnd(String id, boolean error) {
+        if (!isCurrentSession(id)) {
+            Log.i("tts", "丢弃旧会话的回调 id=" + id);
+            return;
+        }
+        if (error) {
+            // 出错就别等了：后面排队的片段很可能已经被引擎丢掉
+            if (speechListener != null) {
+                speechListener.onError();
+            }
+            return;
+        }
+        if (!isLastChunk(id)) {
+            return;     // 后面还有片段，别急着收状态
+        }
+        if (speechListener != null) {
+            speechListener.onDone();
+        }
+    }
+
+    /** id 形如 "3#0"，# 前面是会话号，后面是第几段 */
+    private static boolean isCurrentSession(String id) {
+        return sessionOf(id) == session;
+    }
+
+    private static boolean isLastChunk(String id) {
+        int i = (id == null) ? -1 : id.indexOf('#');
+        if (i < 0) {
+            return true;    // 没有段号信息，当作只有一段
+        }
+        try {
+            return Integer.parseInt(id.substring(i + 1)) >= chunkTotal - 1;
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
+    private static int sessionOf(String id) {
+        if (id == null || id.length() == 0) {
+            return -1;
+        }
+        int i = id.indexOf('#');
+        String head = (i < 0) ? id : id.substring(0, i);
+        try {
+            return Integer.parseInt(head);
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
     public static void release() {
         serial++;
+        session++;      // 在途回调全部作废
+        chunkTotal = 0;
         ready = false;
         if (tts != null) {
             try {
@@ -456,7 +576,16 @@ public class TtsManager {
         }
     }
 
-    /** 朗读。语速音调从 Prefs 取 */
+    /**
+     * 朗读。语速音调从 Prefs 取。
+     *
+     * 长文本必须切段：官方上限 getMaxSpeechInputLength() 是 4000 字，
+     * 超了 speak() 直接返回 ERROR —— 引擎一个字都不念，界面上却已经进入"朗读中"，
+     * 用户看到球变橙、听不到声音，点一下球又退回待命，像坏了一样。
+     * 切段后按顺序排队（FLUSH + ADD），读完最后一段才算这次朗读结束。
+     *
+     * 返回值也如实反映引擎的应答，不再一律 true。
+     */
     public static boolean speak(String text, float rate, float pitch) {
         if (tts == null || !ready || text == null) {
             return false;
@@ -464,19 +593,69 @@ public class TtsManager {
         try {
             tts.setSpeechRate(rate);
             tts.setPitch(pitch);
-            Log.i("tts", "speak " + text.length() + " 字 rate=" + rate + " pitch=" + pitch);
-            String id = "u" + System.nanoTime();
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                Bundle b = new Bundle();
-                b.putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, id);
-                tts.speak(text, TextToSpeech.QUEUE_FLUSH, b, id);
-            } else {
-                tts.speak(text, TextToSpeech.QUEUE_FLUSH, null);
+            java.util.List<String> parts = split(text);
+            if (parts.isEmpty()) {
+                return false;
+            }
+            int mySession = ++session;
+            chunkTotal = parts.size();
+            Log.i("tts", "speak " + text.length() + " 字 → " + parts.size()
+                    + " 段 rate=" + rate + " pitch=" + pitch);
+            for (int i = 0; i < parts.size(); i++) {
+                String id = mySession + "#" + i;
+                int mode = (i == 0) ? TextToSpeech.QUEUE_FLUSH : TextToSpeech.QUEUE_ADD;
+                int r;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    Bundle b = new Bundle();
+                    b.putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, id);
+                    r = tts.speak(parts.get(i), mode, b, id);
+                } else {
+                    r = tts.speak(parts.get(i), mode, null);
+                }
+                if (r != TextToSpeech.SUCCESS) {
+                    Log.e("tts", "引擎拒收第 " + i + " 段，返回 " + r);
+                    session++;      // 作废这一批已经排进去的
+                    chunkTotal = 0;
+                    return false;
+                }
             }
             return true;
         } catch (Exception e) {
+            Log.e("tts", "speak 抛异常", e);
+            chunkTotal = 0;
             return false;
         }
+    }
+
+    /**
+     * 把长文本切成不超过 MAX_CHUNK 的几段，尽量切在标点上。
+     * 找不到标点就硬切 —— 硬切的听感差，但总比整段被拒收、一个字都不念强。
+     */
+    private static java.util.List<String> split(String text) {
+        java.util.List<String> out = new java.util.ArrayList<String>();
+        String t = text.trim();
+        while (t.length() > 0) {
+            if (t.length() <= MAX_CHUNK) {
+                out.add(t);
+                break;
+            }
+            int cut = -1;
+            for (int i = MAX_CHUNK - 1; i >= MAX_CHUNK / 2; i--) {
+                char c = t.charAt(i);
+                if (c == '。' || c == '！' || c == '？' || c == '；' || c == '\n'
+                        || c == '.' || c == '!' || c == '?' || c == ';'
+                        || c == '，' || c == ',' || c == '、') {
+                    cut = i + 1;
+                    break;
+                }
+            }
+            if (cut <= 0) {
+                cut = MAX_CHUNK;
+            }
+            out.add(t.substring(0, cut));
+            t = t.substring(cut);
+        }
+        return out;
     }
 
     /**
@@ -488,6 +667,10 @@ public class TtsManager {
      * 直接 stop() 就够了，不要多此一举。
      */
     public static void stop() {
+        // 会话号一变，在途的"读完了"回调就全被丢掉，
+        // 不会在读下一句的时候被上一句的回调把状态清回待命
+        session++;
+        chunkTotal = 0;
         if (tts == null) {
             return;
         }

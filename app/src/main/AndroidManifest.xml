@@ -5,6 +5,9 @@
     <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
+    <!-- 点按时震一下，确认"点上了"。看不见球变没变色的时候靠它，见 Haptics.java -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
     <!-- 主要走 TYPE_ACCESSIBILITY_OVERLAY，不需要这个权限。
          留着是为了兜底：个别 ROM 的无障碍窗口加不进去时，
          BallController.show() 会退到 TYPE_APPLICATION_OVERLAY，那条路要这个权限。

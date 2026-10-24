@@ -213,16 +213,21 @@ public class TextGrabber {
         }
     }
 
-    /** 系统装饰窗口 / 我们自己的浮层：一律不当内容窗口 */
+    /**
+     * 系统装饰窗口 / 我们自己的浮层：一律不当内容窗口。
+     *
+     * 注意：Android 只有 TYPE_SYSTEM 一个类型同时代表状态栏和导航栏，
+     * 没有 TYPE_STATUS_BAR / TYPE_NAVIGATION_BAR（这两个名字不存在，写了编译不过）。
+     * TYPE_MAGNIFICATION_OVERLAY 是 API 33 才有的，compileSdk 30 引不到，
+     * 它只是放大后的位图、没有文字节点，不排除也不影响抓字。
+     */
     private static boolean isChrome(AccessibilityWindowInfo w) {
         try {
             int t = w.getType();
-            return t == AccessibilityWindowInfo.TYPE_STATUS_BAR
-                    || t == AccessibilityWindowInfo.TYPE_NAVIGATION_BAR
+            return t == AccessibilityWindowInfo.TYPE_SYSTEM
                     || t == AccessibilityWindowInfo.TYPE_INPUT_METHOD
                     || t == AccessibilityWindowInfo.TYPE_SPLIT_SCREEN_DIVIDER
-                    || t == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY
-                    || t == AccessibilityWindowInfo.TYPE_MAGNIFICATION_OVERLAY;
+                    || t == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY;
         } catch (Exception e) {
             return false;
         }

@@ -29,7 +29,7 @@ import java.util.Locale;
  */
 public class Log {
 
-    private static final String TAG = "球球";
+    private static final String TAG = "看得清";
     private static final String NAME = "qiuqiu.log";
     /** 文件超过 150KB 就砍掉前面一半，防止越用越撑 */
     private static final int MAX_BYTES = 150 * 1024;
@@ -224,7 +224,7 @@ public class Log {
         }
         String stamp = new SimpleDateFormat("mmdd_HHmm", Locale.CHINA)
                 .format(new Date());
-        String name = "球球日志_" + stamp + ".txt";
+        String name = "看得清日志_" + stamp + ".txt";
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 ContentValues v = new ContentValues();

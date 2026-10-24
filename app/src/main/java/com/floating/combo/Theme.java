@@ -3,7 +3,7 @@ package com.floating.combo;
 import android.graphics.drawable.GradientDrawable;
 
 /**
- * 球球 2.0 视觉规范：集中管理配色、圆角、描边与品牌渐变。
+ * 看得清 2.1 视觉规范：集中管理配色、圆角、描边与品牌渐变。
  *
  * 纯展示层 —— 不引用任何核心逻辑（TTS / 抓字 / 日志 / 手势）。
  * 所有圆角/描边参数都用 px 传入（由调用方用 dp() 换算）。

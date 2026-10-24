@@ -159,7 +159,7 @@ public class BallController implements View.OnTouchListener {
 
         int sx = prefs.ballX();
         int sy = prefs.ballY();
-        if (sx < 0 || sy < 0) {
+        if (!prefs.hasBallPos()) {
             sx = screenW - size - dp(8);
             sy = screenH / 3;
         }
@@ -389,7 +389,10 @@ public class BallController implements View.OnTouchListener {
 
                 view.setDrawScale(1f);
 
-                if (st == ST_PENDING || st == ST_DRAG_BALL) {
+                // 只有真拖动过才重新落位。
+                // 原来轻点也走这条：球停在中屏时，点一下要读字，球却自己弹到边上，
+                // 下次更点不中。轻点不改位置。
+                if (st == ST_DRAG_BALL) {
                     if (prefs.snapEdge()) {
                         animateToEdge((int) (fx - offsetX), (int) (fy - offsetY));
                     } else {
