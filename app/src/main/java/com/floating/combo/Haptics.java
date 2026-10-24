@@ -1,6 +1,7 @@
 package com.floating.combo;
 
 import android.content.Context;
+import android.media.AudioAttributes;
 import android.os.Build;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
@@ -143,6 +144,13 @@ public final class Haptics {
         }
     }
 
+    /** 无障碍用途：告诉系统这是辅助功能反馈，静音/勿扰模式不该把它屏蔽 */
+    private static AudioAttributes attrs() {
+        return new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
+                .build();
+    }
+
     private static void buzz(String name, long[] timings, int repeat) {
         if (!enabled) {
             Log.i("haptic", name + " 跳过（开关关着）");
@@ -156,20 +164,30 @@ public final class Haptics {
         }
         try {
             boolean done = false;
-            // 只有明确支持振幅控制才带振幅。
-            // 不支持的机器上传 DEFAULT_AMPLITUDE 混 255，部分 ROM 会直接抛异常。
-            if (amplitudeControl(vv)) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 try {
-                    int n = timings.length;
-                    int[] amps = new int[n];
-                    amps[0] = 0;
-                    for (int i = 1; i < n; i++) {
-                        amps[i] = AMP;
+                    VibrationEffect fx;
+                    if (timings.length <= 2) {
+                        // 单次震动用 createOneShot：
+                        // 之前一律用 createWaveform({0, n}, {0, amp})，
+                        // 首段 0 时长在部分 ROM 上会整个不生效
+                        fx = VibrationEffect.createOneShot(
+                                timings[timings.length - 1],
+                                amplitudeControl(vv) ? AMP : VibrationEffect.DEFAULT_AMPLITUDE);
+                    } else {
+                        int n = timings.length;
+                        int[] amps = new int[n];
+                        amps[0] = 0;
+                        for (int i = 1; i < n; i++) {
+                            amps[i] = amplitudeControl(vv) ? AMP
+                                    : VibrationEffect.DEFAULT_AMPLITUDE;
+                        }
+                        fx = VibrationEffect.createWaveform(timings, amps, repeat);
                     }
-                    vv.vibrate(VibrationEffect.createWaveform(timings, amps, repeat));
+                    vv.vibrate(fx, attrs());
                     done = true;
                 } catch (Throwable t) {
-                    Log.w("haptic", name + " 带振幅失败，退回普通震动：" + t);
+                    Log.w("haptic", name + " VibrationEffect 失败，退回老接口：" + t);
                 }
             }
             if (!done) {
@@ -179,8 +197,7 @@ public final class Haptics {
                 vv.vibrate(timings, repeat);
             }
             lastError = "";
-            Log.i("haptic", name + " " + timings[timings.length - 1] + "ms"
-                    + (amplitudeControl(vv) ? "（带振幅）" : "（普通）"));
+            Log.i("haptic", name + " " + timings[timings.length - 1] + "ms");
         } catch (Throwable t) {
             lastError = String.valueOf(t);
             Log.w("haptic", name + " 失败：" + t);

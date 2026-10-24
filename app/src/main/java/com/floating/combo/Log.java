@@ -9,8 +9,9 @@ import android.os.Handler;
 import android.os.HandlerThread;
 import android.provider.MediaStore;
 
+import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileInputStream;
+import java.io.FileReader;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
@@ -209,62 +210,112 @@ public class Log {
         i("app", "日志已清空");
     }
 
+    /** 日志原文（复制按钮用；没有就返回空串，不返回 null，调用方好判断） */
+    public static String content() {
+        if (file == null || !file.exists()) {
+            return "";
+        }
+        try {
+            StringBuilder sb = new StringBuilder();
+            BufferedReader br = new BufferedReader(new FileReader(file));
+            String line;
+            while ((line = br.readLine()) != null) {
+                sb.append(line).append("\n");
+            }
+            br.close();
+            return sb.toString();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /** 拼成 markdown：有个标题和设备信息，发给别人一眼能看懂 */
+    private static String asMarkdown() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("# 看得清 诊断日志\n\n");
+        sb.append("- 导出时间：").append(
+                new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA).format(new Date()))
+                .append("\n");
+        sb.append("- 设备：").append(deviceInfo()).append("\n");
+        ArrayList<String> ls = recent();
+        sb.append("- 条数：").append(ls.size()).append("（最多保留 60 条）\n\n");
+        sb.append("```\n");
+        String body = content();
+        if (body.length() == 0) {
+            body = "(暂无日志)";
+        }
+        sb.append(body);
+        if (!body.endsWith("\n")) {
+            sb.append("\n");
+        }
+        sb.append("```\n");
+        return sb.toString();
+    }
+
+    /** 默认文件名，.md —— 发给开发直接能渲染 */
+    public static String defaultName() {
+        String stamp = new SimpleDateFormat("MMdd_HHmm", Locale.CHINA).format(new Date());
+        return "看得清日志_" + stamp + ".md";
+    }
+
     /**
-     * 复制一份日志到「下载」目录，返回给用户看得懂的位置描述；失败返回 null。
+     * 写到用户自己挑的位置（系统文件选择器给的 Uri）。
      *
-     * Android 10（Q）起作用域存储，直接写公共 Downloads 会被拦、抛异常，
-     * 老代码被 catch 掉返回 null → 只能看到"导出失败"。
-     * 改法：
-     *   - API 29+ 用 MediaStore 写进 Downloads（作用域存储下的正路）
-     *   - API < 29 仍可直写公共 Downloads
-     *   - 任一路径失败，兜底写进 app 私有外部目录（必定可写），保证不空手而归
+     * 这是现在的首选：走 SAF，任何安卓版本都不需要存储权限，
+     * 而且用户能自己决定存到哪（之前是硬写「下载」目录，用户根本不知道去哪找）。
+     */
+    public static boolean exportTo(Context ctx, Uri uri) {
+        if (uri == null) {
+            return false;
+        }
+        try {
+            OutputStream os = ctx.getContentResolver().openOutputStream(uri);
+            if (os == null) {
+                return false;
+            }
+            os.write(asMarkdown().getBytes("UTF-8"));
+            os.flush();
+            os.close();
+            i("app", "日志已导出（.md）");
+            return true;
+        } catch (Exception e) {
+            Log.e("log", "写入选择器返回的位置失败", e);
+            return false;
+        }
+    }
+
+    /**
+     * 兜底导出：选择器调不起来时用。
+     *   - API 29+ 用 MediaStore 写进「下载」（作用域存储下的正路）
+     *   - 再不行就写 app 私有目录，必定可写
+     * 返回给用户看得懂的位置描述；失败返回 null。
      */
     public static String export(Context ctx) {
         if (file == null || !file.exists()) {
             return null;
         }
-        String stamp = new SimpleDateFormat("mmdd_HHmm", Locale.CHINA)
-                .format(new Date());
-        String name = "看得清日志_" + stamp + ".txt";
+        String name = defaultName();
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 ContentValues v = new ContentValues();
                 v.put(MediaStore.Downloads.DISPLAY_NAME, name);
-                v.put(MediaStore.Downloads.MIME_TYPE, "text/plain");
+                v.put(MediaStore.Downloads.MIME_TYPE, "text/markdown");
                 v.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
                 Uri uri = ctx.getContentResolver()
                         .insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
-                if (uri != null) {
-                    try {
-                        OutputStream os = ctx.getContentResolver().openOutputStream(uri);
-                        FileInputStream in = new FileInputStream(file);
-                        copy(in, os);
-                        in.close();
-                        os.close();
-                        return Environment.DIRECTORY_DOWNLOADS + "/" + name;
-                    } catch (Exception e) {
-                        Log.e("log", "MediaStore 写入失败，转私有目录", e);
-                    }
-                }
-            } else {
-                File dl = Environment.getExternalStoragePublicDirectory(
-                        Environment.DIRECTORY_DOWNLOADS);
-                if (dl != null) {
-                    if (!dl.exists()) {
-                        dl.mkdirs();
-                    }
-                    File out = new File(dl, name);
-                    copy(new FileInputStream(file), new FileOutputStream(out));
-                    return out.getAbsolutePath();
+                if (uri != null && exportTo(ctx, uri)) {
+                    return "下载/" + name;
                 }
             }
-            // 兜底：写进 app 私有外部目录（必然可写，无需任何权限）
+            // 兜底：app 私有外部目录（必然可写，无需任何权限）
             File dir = ctx.getExternalFilesDir(null);
             if (dir == null) {
                 dir = ctx.getFilesDir();
             }
             File out = new File(dir, name);
-            copy(new FileInputStream(file), new FileOutputStream(out));
+            FileOutputStream fos = new FileOutputStream(out);
+            fos.write(asMarkdown().getBytes("UTF-8"));
+            fos.close();
             return out.getAbsolutePath();
         } catch (Exception e) {
             Log.e("log", "导出失败", e);

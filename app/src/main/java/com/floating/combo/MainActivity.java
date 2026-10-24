@@ -5,8 +5,8 @@ import android.content.ClipData;
 import android.content.Context;
 import android.content.ClipboardManager;
 import android.content.Intent;
-import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
+import android.net.Uri;
 import android.graphics.Color;
 import android.graphics.PorterDuff;
 import android.graphics.drawable.GradientDrawable;
@@ -956,10 +956,21 @@ public class MainActivity extends Activity
             @Override
             public void onClick(View v) {
                 String err = Haptics.test();
-                tvHapticDiag.setText(Haptics.diag());
-                toast(err.length() == 0
-                        ? "已震一下（就是按住放大那一下）"
-                        : "震动失败：" + err);
+                String d = Haptics.diag();
+                // 结果必须留在屏幕上：之前只弹 Toast，一闪就没了，
+                // 用户根本记不住上面写了什么，也就没法反馈给我
+                if (err.length() == 0) {
+                    tvHapticDiag.setText(d + "\n"
+                            + "震动指令已发出。\n"
+                            + "如果还是没感觉，查这两处：\n"
+                            + "1) 手机是不是静音 / 勿扰模式\n"
+                            + "2) 设置→应用管理→看得清→通知管理→振动\n"
+                            + "   （MIUI / EMUI / ColorOS 这一项默认可能是关的）");
+                    toast("震动指令已发出，结果写在下面");
+                } else {
+                    tvHapticDiag.setText(d + "\n失败：" + err + "\n把这行截图发我");
+                    toast("震动失败：" + err);
+                }
             }
         });
         LinearLayout.LayoutParams tl =
@@ -1076,7 +1087,7 @@ public class MainActivity extends Activity
         return page;
     }
 
-    private static final int REQ_EXPORT = 71;
+    private static final int REQ_SAVE = 72;
 
     private void doExport() {
         String p = Log.export(MainActivity.this);
@@ -1088,16 +1099,20 @@ public class MainActivity extends Activity
     }
 
     @Override
-    public void onRequestPermissionsResult(int code, String[] perms, int[] res) {
-        super.onRequestPermissionsResult(code, perms, res);
-        if (code != REQ_EXPORT) {
+    protected void onActivityResult(int code, int result, Intent data) {
+        super.onActivityResult(code, result, data);
+        if (code != REQ_SAVE || result != RESULT_OK || data == null) {
             return;
         }
-        if (res.length > 0 && res[0] == PackageManager.PERMISSION_GRANTED) {
-            doExport();
+        Uri uri = data.getData();
+        if (uri == null) {
+            return;
+        }
+        String where = uri.getLastPathSegment();
+        if (Log.exportTo(this, uri)) {
+            toast("已存到你选的位置\n" + (where == null ? "" : where));
         } else {
-            toast("没给存储权限，日志会存到应用自己的目录里");
-            doExport();
+            toast("保存失败，换一个位置试试");
         }
     }
 
@@ -1185,18 +1200,47 @@ public class MainActivity extends Activity
         bExport.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                // Android 10 以下写公共下载目录要运行时权限，没有就直接写私有目录
-                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
-                        && checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                        != PackageManager.PERMISSION_GRANTED) {
-                    requestPermissions(new String[]{
-                            android.Manifest.permission.WRITE_EXTERNAL_STORAGE}, REQ_EXPORT);
-                    return;
+                // 走系统文件选择器：用户自己决定存到哪，
+                // 而且任何安卓版本都不需要存储权限（之前硬写「下载」，用户根本找不到）
+                try {
+                    Intent it = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                    it.addCategory(Intent.CATEGORY_OPENABLE);
+                    it.setType("text/markdown");
+                    it.putExtra(Intent.EXTRA_TITLE, Log.defaultName());
+                    startActivityForResult(it, REQ_SAVE);
+                } catch (Exception e) {
+                    // 这台机器没有系统文件选择器，退回自动导出
+                    doExport();
                 }
-                doExport();
             }
         });
         row.addView(bExport);
+
+        Button bCopyLog = flatBtn("复制日志");
+        bCopyLog.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                String t = Log.content();
+                if (t.length() == 0) {
+                    toast("还没有产生日志");
+                    return;
+                }
+                try {
+                    ClipboardManager cm =
+                            (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                    cm.setPrimaryClip(ClipData.newPlainText("看得清日志", t));
+                    Haptics.tap();
+                    toast("日志已复制（" + t.length() + " 字），可直接粘贴给我");
+                } catch (Exception e) {
+                    toast("复制失败");
+                }
+            }
+        });
+        LinearLayout.LayoutParams cl =
+                new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        cl.leftMargin = dp(6);
+        cl.rightMargin = dp(6);
+        row.addView(bCopyLog, cl);
 
         Button bRefresh = flatBtn("刷新");
         LinearLayout.LayoutParams wl2 =

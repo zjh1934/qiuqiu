@@ -16,9 +16,6 @@
 
     <!-- 仅 Android 10（API 29）用于把日志写进公共 Downloads（MediaStore）。
          API 30+ 走作用域存储、不需要此权限；再高版本会被忽略，故限定 maxSdkVersion=29。 -->
-    <uses-permission
-        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="29" />
 
     <!-- Android 11+ 声明后才能枚举第三方 TTS 引擎。
          如果你的 AIDE 报 "<queries> 未知元素"，把下面整个 <queries> 块删掉即可：
