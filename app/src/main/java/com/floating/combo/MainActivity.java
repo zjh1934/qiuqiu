@@ -11,13 +11,17 @@ import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.animation.DecelerateInterpolator;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.CompoundButton;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.Spinner;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -34,10 +38,18 @@ public class MainActivity extends Activity
 
     private Prefs prefs;
 
-    private Button btnOn;
+    private Switch swBall;
+    private Button bAcc;
     private TextView tvStatus;
+    /** 程序在刷开关状态时置 true，避免 setChecked 反过来触发用户操作 */
+    private boolean syncSwitch = false;
 
-    private LinearLayout tabBar;
+    private FrameLayout tabHost;
+    private LinearLayout tabRow;
+    private View tabIndicator;
+    /** 高亮条正在滑动时置 true，别让布局回调把它中途掐掉 */
+    private boolean indicatorMoving = false;
+    private ScrollView sv;
     private final Button[] tabs = new Button[3];
     private LinearLayout body;
     private final LinearLayout[] pages = new LinearLayout[3];
@@ -78,7 +90,7 @@ public class MainActivity extends Activity
         screen.setOrientation(LinearLayout.VERTICAL);
         screen.setBackgroundColor(Theme.BG);
 
-        ScrollView sv = new ScrollView(this);
+        sv = new ScrollView(this);
         sv.setBackgroundColor(Theme.BG);
         sv.setFillViewport(true);
         screen.addView(sv, new LinearLayout.LayoutParams(
@@ -90,7 +102,8 @@ public class MainActivity extends Activity
         root.setPadding(p, p, p, dp(12));
         sv.addView(root);
 
-        root.addView(cardTop(), lp(0, 0, 0, dp(12)));
+        root.addView(cardTop(), lp(0, 0, 0, dp(10)));
+        root.addView(cardStatus(), lp(0, 0, 0, dp(12)));
 
         body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
@@ -131,42 +144,83 @@ public class MainActivity extends Activity
 
     // ---------- 顶部卡 ----------
 
+    /**
+     * 模块一：开关。
+     *
+     * 原来是"一个按钮 + 三行状态文字"挤在同一张卡里，按钮文字还跟着设置项走
+     * （无障碍都没开就写"关闭悬浮球"）。现在拆开：这张卡只管开关，状态另起一张。
+     */
     private View cardTop() {
         LinearLayout c = card();
 
-        btnOn = primaryBtn();
-        btnOn.setTextSize(16);
-        btnOn.setAllCaps(false);
-        btnOn.setOnClickListener(new View.OnClickListener() {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView title = new TextView(this);
+        title.setText("悬浮球");
+        title.setTextSize(18);
+        title.setTextColor(Theme.TEXT);
+        row.addView(title, new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        swBall = new Switch(this);
+        swBall.setShowText(false);
+        swBall.setContentDescription("悬浮球开关");
+        swBall.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
-            public void onClick(View v) {
-                // 按钮文字跟着"现在到底有没有球"走，所以点它只有两种结果：
-                // 有球 → 关掉；没球 → 打开（顺带把"该出来却没出来"修一次）
+            public void onCheckedChanged(CompoundButton b, boolean checked) {
+                if (syncSwitch) {
+                    return;     // 界面在同步状态，不是用户点的
+                }
                 if (!accOn()) {
                     toast("先去开启无障碍服务，球才有地方挂");
+                    syncSwitch = true;
+                    swBall.setChecked(false);
+                    syncSwitch = false;
                     openAccSettings();
                     return;
                 }
-                boolean shown = ComboService.isRunning() && ComboService.ballShown();
-                prefs.setBallOn(!shown);
+                prefs.setBallOn(checked);
                 ComboService.refresh();
-                // 服务可能刚被系统拉起来，稍等再刷一次状态
-                v.postDelayed(new Runnable() {
+                // 服务把球挂到窗口上要一点时间，稍后再按事实刷一次
+                b.postDelayed(new Runnable() {
                     @Override
                     public void run() {
                         refreshStatus();
                     }
-                }, 400);
-                refreshStatus();
+                }, 350);
             }
         });
-        c.addView(btnOn, lp(0, 0, 0, dp(10)));
+        row.addView(swBall);
+        c.addView(row);
 
+        TextView sub = new TextView(this);
+        sub.setText("按住球放大 · 轻点球读字 · 拖动挪位");
+        sub.setTextSize(13);
+        sub.setTextColor(Theme.TEXT_2);
+        c.addView(sub, lp(0, dp(6), 0, 0));
+
+        bAcc = flatBtn("去开启无障碍服务");
+        bAcc.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                openAccSettings();
+            }
+        });
+        bAcc.setVisibility(View.GONE);
+        c.addView(bAcc, lp(0, dp(12), 0, 0));
+
+        return c;
+    }
+
+    /** 模块二：状态。跟开关分开，各占一张卡 */
+    private View cardStatus() {
+        LinearLayout c = card();
         tvStatus = new TextView(this);
         tvStatus.setTextSize(13);
         tvStatus.setLineSpacing(dp(2), 1f);
         c.addView(tvStatus);
-
         return c;
     }
 
@@ -184,20 +238,21 @@ public class MainActivity extends Activity
         boolean acc = accOn();
         boolean running = ComboService.isRunning();
         boolean shown = acc && running && ComboService.ballShown();
-        boolean on = prefs.ballOn();
-        Log.i("ui", "状态刷新 设置=" + on + " 无障碍=" + acc
+        Log.i("ui", "状态刷新 设置=" + prefs.ballOn() + " 无障碍=" + acc
                 + " 服务=" + running + " 球=" + shown);
 
-        // 文字只认事实：服务真的把球挂到屏幕上，才算"开着"。
-        // 原来只看设置项，第一次装好还没开无障碍时也写着"关闭悬浮球"，
-        // 用户点下去反而把它关了，完全对不上。
-        if (!acc) {
-            btnOn.setText("去开启无障碍服务");
-        } else if (shown) {
-            btnOn.setText("关闭悬浮球");
-        } else {
-            btnOn.setText("开启悬浮球");
-        }
+        // 开关只认事实：球真的挂在窗口上才算开。
+        // 原来按设置项显示，第一次装好、无障碍还没开就写着"关闭悬浮球"。
+        // 开关显示"想不想开"，实际开没开由下面状态卡说。
+        // 不能按事实显示：一旦球因为别的原因没挂上（服务没连、窗口加不上），
+        // 开关会永远点不动，用户连关掉重试都做不到。
+        syncSwitch = true;
+        swBall.setEnabled(acc);
+        swBall.setChecked(acc && prefs.ballOn());
+        syncSwitch = false;
+
+        // 无障碍没开时，开关点不了，给一个直达设置的按钮
+        bAcc.setVisibility(acc ? View.GONE : View.VISIBLE);
 
         StringBuilder sb = new StringBuilder();
         sb.append(acc ? "● 无障碍已开启" : "○ 无障碍未开启").append("\n");
@@ -206,18 +261,14 @@ public class MainActivity extends Activity
         } else {
             sb.append("○ 球未显示（要先开无障碍）");
         }
-        sb.append("\n● 点球选字朗读　● 按住球放大");
+        if (acc && running && prefs.ballOn() && !shown) {
+            sb.append("\n○ 开关是开的，但球没挂上窗口（关一次再开可重试）");
+        }
+        if (shown) {
+            sb.append("\n● 点球选字朗读　● 按住球放大");
+        }
         tvStatus.setText(sb.toString());
         tvStatus.setTextColor(Theme.TEXT_2);
-
-        // 有球时是描边红字"关闭"，没球时是品牌渐变"开启"
-        if (shown) {
-            btnOn.setBackgroundDrawable(Theme.rounded(Theme.SURFACE_2, dp(12), Theme.DANGER, 1));
-            btnOn.setTextColor(Theme.DANGER);
-        } else {
-            btnOn.setBackgroundDrawable(Theme.brandGradientPill(dp(12)));
-            btnOn.setTextColor(Color.WHITE);
-        }
     }
 
     /** 粗略判断：本包名的服务有没有出现在已启用列表里 */
@@ -236,12 +287,28 @@ public class MainActivity extends Activity
 
     // ---------- Tab ----------
 
+    /**
+     * 底部导航容器：一个滑动的高亮条 + 三个页签。
+     *
+     * 原来高亮是给选中按钮换背景，切换时"啪"地跳过去，没有过渡。
+     * 现在高亮是一条独立的渐变条，切页时横向滑过去，和内容一起交代位置。
+     */
     private View tabBar() {
-        tabBar = new LinearLayout(this);
-        tabBar.setOrientation(LinearLayout.HORIZONTAL);
-        tabBar.setBackgroundDrawable(Theme.rounded(Theme.SURFACE, dp(14), Theme.BORDER, 1));
+        tabHost = new FrameLayout(this);
+        tabHost.setBackgroundDrawable(
+                Theme.rounded(Theme.SURFACE_2, dp(14), Theme.BORDER, 1));
         int pad = dp(5);
-        tabBar.setPadding(pad, pad, pad, pad);
+
+        tabIndicator = new View(this);
+        tabIndicator.setBackgroundDrawable(Theme.brandGradientPill(dp(10)));
+        FrameLayout.LayoutParams ilp = new FrameLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT);
+        ilp.topMargin = pad;
+        ilp.bottomMargin = pad;
+        tabHost.addView(tabIndicator, ilp);
+
+        tabRow = new LinearLayout(this);
+        tabRow.setOrientation(LinearLayout.HORIZONTAL);
+        tabRow.setPadding(pad, pad, pad, pad);
 
         String[] names = new String[]{"朗读", "放大", "球"};
         for (int i = 0; i < names.length; i++) {
@@ -250,9 +317,9 @@ public class MainActivity extends Activity
             b.setText(names[i]);
             b.setAllCaps(false);
             b.setTextSize(15);
-            // 底部导航要够高，手指才点得稳
-            b.setMinHeight(dp(48));
+            // 背景必须清掉：留着默认按钮底色会盖住下面的高亮条
             b.setBackgroundDrawable(Theme.rounded(Theme.TRANSPARENT, dp(10), 0, 0));
+            b.setMinHeight(dp(48));
             LinearLayout.LayoutParams l =
                     new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
             l.setMargins(dp(4), 0, dp(4), 0);
@@ -264,9 +331,64 @@ public class MainActivity extends Activity
                 }
             });
             tabs[i] = b;
-            tabBar.addView(b);
+            tabRow.addView(b);
         }
-        return tabBar;
+        tabHost.addView(tabRow, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        // 布局完成后才知道每个页签多宽，这时把高亮条摆到位
+        tabHost.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+            @Override
+            public void onLayoutChange(View v, int left, int top, int right, int bottom,
+                                       int oldLeft, int oldTop, int oldRight, int oldBottom) {
+                // 布局期间（改字号也会触发布局）不要去碰动画，否则刚起步就被 cancel
+                if (!indicatorMoving) {
+                    moveIndicator(false);
+                }
+            }
+        });
+        return tabHost;
+    }
+
+    /** 高亮条滑到当前页签下面 */
+    private void moveIndicator(boolean animate) {
+        if (tabHost == null || tabIndicator == null
+                || curTab < 0 || curTab >= tabs.length || tabs[curTab] == null) {
+            return;
+        }
+        indicatorMoving = false;    // 先归零：下面的提前 return 不能把闸门锁死
+        int w = tabs[curTab].getWidth();
+        if (w <= 0) {
+            return;     // 还没量出来，等下一次布局回调
+        }
+        FrameLayout.LayoutParams ilp =
+                (FrameLayout.LayoutParams) tabIndicator.getLayoutParams();
+        if (ilp.width != w) {
+            ilp.width = w;
+            tabIndicator.setLayoutParams(ilp);
+        }
+        float target = tabs[curTab].getLeft();
+        tabIndicator.animate().cancel();
+        if (animate) {
+            indicatorMoving = true;
+            tabIndicator.animate().translationX(target)
+                    .setDuration(180)
+                    .setInterpolator(new DecelerateInterpolator())
+                    .withEndAction(new Runnable() {
+                        @Override
+                        public void run() {
+                            // 滑完按真实位置再对一次：这 180ms 里如果发生了
+                            // 旋转/分屏之类导致页签变宽，动画的目标值就过期了
+                            if (tabs[curTab] != null) {
+                                tabIndicator.setTranslationX(tabs[curTab].getLeft());
+                            }
+                            indicatorMoving = false;
+                        }
+                    })
+                    .start();
+        } else {
+            tabIndicator.setTranslationX(target);
+        }
     }
 
     private void switchTab(int idx) {
@@ -278,10 +400,22 @@ public class MainActivity extends Activity
             boolean active = (i == idx);
             tabs[i].setTextColor(active ? Color.WHITE : Theme.TEXT_2);
             tabs[i].setTextSize(active ? 16 : 15);
-            tabs[i].setBackgroundDrawable(active
-                    ? Theme.brandGradientPill(dp(10))
-                    : Theme.rounded(Theme.TRANSPARENT, dp(10), 0, 0));
         }
+        moveIndicator(true);
+
+        // 三个页高度差很大：不回到顶部的话，从"球"页滚到底再切"朗读"，
+        // 会直接落在新页面的中段，看着像"内容没了"
+        sv.post(new Runnable() {
+            @Override
+            public void run() {
+                sv.scrollTo(0, 0);
+            }
+        });
+
+        // 内容淡入一下，切页才有"换了一页"的交代
+        body.setAlpha(0f);
+        body.setTranslationY(dp(6));
+        body.animate().alpha(1f).translationY(0f).setDuration(180).start();
     }
 
     // ---------- 朗读页 ----------
@@ -670,7 +804,7 @@ public class MainActivity extends Activity
                 prefs.setSizeDp(56);
                 prefs.setAlpha(0.92f);
                 prefs.setIdleAlpha(0.30f);
-                prefs.setSnapEdge(true);
+                prefs.setSnapEdge(false);
                 prefs.setColorIndex(0);
                 colorIndex = 0;
                 rebuild();
@@ -697,6 +831,12 @@ public class MainActivity extends Activity
     }
 
     private void updateHapticText() {
+        if (!Haptics.available()) {
+            btnHaptic.setText("点按时震一下：这台手机不支持");
+            btnHaptic.setEnabled(false);
+            return;
+        }
+        btnHaptic.setEnabled(true);
         btnHaptic.setText("点按时震一下：" + (prefs.haptics() ? "开" : "关"));
     }
 
@@ -875,12 +1015,23 @@ public class MainActivity extends Activity
      * 而且切页要先滚回顶部才点得到。
      */
     private View bottomBar() {
+        // 底部是独立模块：底色比内容区亮一档，顶上一条细线切开。
+        // 原来和内容一样是 Theme.BG，整块糊在一起，看不出这里是导航
         LinearLayout wrap = new LinearLayout(this);
         wrap.setOrientation(LinearLayout.VERTICAL);
-        wrap.setBackgroundColor(Theme.BG);
+        wrap.setBackgroundColor(Theme.SURFACE);
+
+        View line = new View(this);
+        line.setBackgroundColor(Theme.BORDER);
+        wrap.addView(line, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, dp(1))));
+
+        LinearLayout nav = new LinearLayout(this);
+        nav.setOrientation(LinearLayout.VERTICAL);
         int h = dp(10);
-        wrap.setPadding(h, dp(6), h, h);
-        wrap.addView(tabBar());
+        nav.setPadding(h, dp(8), h, h);
+        nav.addView(tabBar());
+        wrap.addView(nav);
         return wrap;
     }
 
@@ -897,16 +1048,6 @@ public class MainActivity extends Activity
         t.setTextColor(Theme.TEXT_3);
         t.setGravity(Gravity.CENTER);
         return t;
-    }
-
-    /** 主操作按钮：品牌渐变 + 白字，用于"开启/关闭悬浮球"这种关键动作。 */
-    private Button primaryBtn() {
-        Button b = new Button(this);
-        b.setAllCaps(false);
-        b.setBackgroundDrawable(Theme.brandGradientPill(dp(12)));
-        b.setTextColor(Color.WHITE);
-        b.setPadding(dp(16), dp(12), dp(16), dp(12));
-        return b;
     }
 
     private interface OnVal {

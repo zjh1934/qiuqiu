@@ -111,8 +111,13 @@ public class Prefs {
         sp.edit().putInt(K_HOLD, v).apply();
     }
 
+    /**
+     * 松手后自动贴边。
+     * 默认关：球是"按住放大"的手柄，用户经常把它放在屏幕中间顺手的位置；
+     * 一松手就弹到边上，下次又要重新找。
+     */
     public boolean snapEdge() {
-        return sp.getBoolean(K_SNAP, true);
+        return sp.getBoolean(K_SNAP, false);
     }
 
     public void setSnapEdge(boolean v) {

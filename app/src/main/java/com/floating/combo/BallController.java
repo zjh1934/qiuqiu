@@ -20,7 +20,7 @@ import android.view.animation.DecelerateInterpolator;
  *
  * 三种手势，靠「时间」和「位移」两条线分开：
  *   手指一动（超 slop）  → 挪球
- *   按住不动超过 holdMs → 放大（松手恢复）
+ *   按住不动超过 holdMs → 放大（手指到哪，球到哪；画面松手就还原，球留在手底下）
  *   按住不动，holdMs 内松手 → 轻点（交给上层，用于朗读）
  *
  * ── 为什么之前"一点都不跟手" ──
@@ -203,42 +203,6 @@ public class BallController implements View.OnTouchListener {
         return view != null && view.getParent() != null;
     }
 
-    private int savedX = 0, savedY = 0;
-    private boolean hasSaved = false;
-
-    /**
-     * 记住球当前位置。
-     *
-     * 放大时球必须跟着手指跑（手指是不动点，取景靠这个）。
-     * 但抬手后如果就停在手指最后的位置，球会"跑掉" ——
-     * 用户再去点他印象里的球位置，点的就是空白，
-     * 表现就是"放大完再点球，朗读触发不了"。
-     * 所以进放大前存原位，结束时退回去。
-     */
-    public void savePos() {
-        if (lp != null) {
-            savedX = lp.x;
-            savedY = lp.y;
-            hasSaved = true;
-            Log.i("ball", "记住球原位 (" + savedX + "," + savedY + ")");
-        }
-    }
-
-    /** 退回放大前的位置 */
-    public void restorePos() {
-        if (!hasSaved || lp == null || view == null) {
-            return;
-        }
-        lp.x = clampX(savedX, lp.width);
-        lp.y = clampY(savedY, lp.height);
-        hasSaved = false;
-        commit();
-        if (cb != null) {
-            cb.onMoved(lp.x, lp.y);
-        }
-        Log.i("ball", "球退回原位 (" + lp.x + "," + lp.y + ")");
-    }
-
     /**
      * 把球提到最上层。
      * 覆盖层加进来会盖住球，原来靠 hide+show 解决，
@@ -269,6 +233,11 @@ public class BallController implements View.OnTouchListener {
     public void hide() {
         cancelAnim();
         h.removeCallbacks(idleTask);
+        // 按住还没到判定时间就被隐藏（比如用户在界面里把开关关了），
+        // holdTask 到点会去碰已经置空的 view —— 直接崩在服务主线程上
+        h.removeCallbacks(holdTask);
+        state = ST_IDLE;
+        faded = false;
         if (view != null && wm != null) {
             try {
                 wm.removeView(view);
@@ -403,10 +372,17 @@ public class BallController implements View.OnTouchListener {
                             cb.onMoved(lp.x, lp.y);
                         }
                     }
-                } else {
-                    // ST_ZOOMING：球退回放大前的位置。
-                    // 别停在手指最后的地方，否则球会"跑掉"，用户下次点不中。
-                    restorePos();
+                } else if (st == ST_ZOOMING) {
+                    // 放大松手：球留在手指最后的位置。
+                    // 原来这里会退回放大前的位置，用户松手后球自己"跑掉"了 ——
+                    // 而他刚才是用手指把球拖过来的，球留在手底下才符合直觉。
+                    // 只做边界收拢，别让它停在屏幕外。
+                    lp.x = clampX((int) (fx - lp.width / 2f), lp.width);
+                    lp.y = clampY((int) (fy - lp.height / 2f), lp.height);
+                    commit();
+                    if (cb != null) {
+                        cb.onMoved(lp.x, lp.y);
+                    }
                 }
                 scheduleIdle();
                 return true;
@@ -519,12 +495,11 @@ public class BallController implements View.OnTouchListener {
     private final Runnable holdTask = new Runnable() {
         @Override
         public void run() {
-            if (state != ST_PENDING) {
+            if (state != ST_PENDING || view == null || lp == null) {
                 return;
             }
             state = ST_ZOOMING;
             Log.gesture("按住够久 → 判定为放大");
-            savePos();          // 先记住原位，抬手要退回去
             if (cb != null) {
                 // 先让上层把朗读停掉：放大就只干放大，不交叉
                 cb.onZoomStart(lastFx, lastFy);

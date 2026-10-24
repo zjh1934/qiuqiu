@@ -8,20 +8,24 @@ import android.os.Vibrator;
 /**
  * 触觉反馈（对应 iOS 那套"轻点确认"的触感）。
  *
- * 为什么无障碍软件要有这个：
- *   球的三个状态（待命 / 选字 / 朗读）原来全靠颜色区分。
- *   低视力的人看不清颜色变化，手指又常常点偏 —— 到底点上了没有，全靠猜。
- *   震一下是最快、最不打扰的确认方式：不用看屏幕，也不用等语音。
+ * ── 为什么第一版"没落地" ──
+ * 之前用 15~22ms 的纯时长震动，而且没设振幅。很多机器上这么短的触发
+ * 根本感觉不到（马达起转本身就要十几毫秒），用户自然以为没做。
+ * 现在：时长从 30ms 起、API 26+ 显式给最大振幅、每次触发都写日志
+ * （导日志搜 "haptic" 就能确认到底有没有调用）。
  *
  * 四种节奏刻意拉开差别，手指能分辨：
- *   tap    一下轻点        —— 取消、一般确认
- *   ready  两下短震        —— 进入选字态，等你点字
- *   speak  一下稍长        —— 开始朗读
- *   error  一记长震        —— 这里没读到字
+ *   tap    一下        —— 取消 / 一般确认
+ *   ready  两下        —— 进入选字态，等你点字
+ *   speak  一下稍长    —— 开始朗读
+ *   error  一记长震    —— 这里没读到字
  *
- * 开关在「球」页，关了就是完全静音（不震），不影响朗读。
+ * 开关在「球」页，关了就是完全不震，不影响朗读。
  */
 public final class Haptics {
+
+    /** 最大振幅。不给的话部分 ROM 按三分之一强度震，几乎摸不到 */
+    private static final int AMP = 255;
 
     private static Vibrator v = null;
     private static boolean enabled = true;
@@ -40,47 +44,82 @@ public final class Haptics {
         } catch (Exception e) {
             v = null;
         }
+        Log.i("haptic", "初始化 " + (v == null ? "拿不到震动马达" : "ok")
+                + " 有马达=" + (v != null && v.hasVibrator())
+                + " 可控振幅=" + hasAmplitude());
     }
 
     public static void setEnabled(boolean on) {
         enabled = on;
     }
 
-    /** 一下轻点：取消 / 一般确认 */
-    public static void tap() {
-        buzz(new long[]{0, 15}, -1);
+    /** 这台机器到底能不能震 */
+    public static boolean available() {
+        try {
+            return v != null && v.hasVibrator();
+        } catch (Exception e) {
+            return false;
+        }
     }
 
-    /** 两下短震：进入选字态，该你点字了 */
+    /** 一下：取消 / 一般确认 */
+    public static void tap() {
+        buzz("tap", new long[]{0, 30}, -1);
+    }
+
+    /** 两下：进入选字态，该你点字了 */
     public static void ready() {
-        buzz(new long[]{0, 22, 70, 22}, -1);
+        buzz("ready", new long[]{0, 40, 90, 40}, -1);
     }
 
     /** 一下稍长：开始朗读 */
     public static void speak() {
-        buzz(new long[]{0, 40}, -1);
+        buzz("speak", new long[]{0, 70}, -1);
     }
 
     /** 一记长震：这里没读到字 / 出错 */
     public static void error() {
-        buzz(new long[]{0, 120}, -1);
+        buzz("error", new long[]{0, 200}, -1);
     }
 
-    private static void buzz(long[] pattern, int repeat) {
-        if (!enabled || v == null) {
+    private static boolean hasAmplitude() {
+        try {
+            return Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && v.hasAmplitudeControl();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static void buzz(String name, long[] timings, int repeat) {
+        if (!enabled) {
+            Log.i("haptic", name + " 跳过（开关关着）");
+            return;
+        }
+        if (v == null) {
+            Log.w("haptic", name + " 跳过（没有 Vibrator 实例）");
             return;
         }
         try {
             if (!v.hasVibrator()) {
+                Log.w("haptic", name + " 跳过（设备没有马达）");
                 return;
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                v.vibrate(VibrationEffect.createWaveform(pattern, repeat));
+                // timings 和 amplitudes 必须等长；第一段是等待时间，振幅必须为 0
+                int n = timings.length;
+                int[] amps = new int[n];
+                amps[0] = 0;
+                for (int i = 1; i < n; i++) {
+                    amps[i] = hasAmplitude() ? AMP : VibrationEffect.DEFAULT_AMPLITUDE;
+                }
+                v.vibrate(VibrationEffect.createWaveform(timings, amps, repeat));
             } else {
-                v.vibrate(pattern, repeat);
+                v.vibrate(timings, repeat);
             }
-        } catch (Exception ignored) {
+            Log.i("haptic", name + " " + timings[timings.length - 1] + "ms");
+        } catch (Exception e) {
             // 没马达、或被系统策略拦了：静默降级，不影响朗读
+            Log.w("haptic", name + " 失败：" + e);
         }
     }
 }
