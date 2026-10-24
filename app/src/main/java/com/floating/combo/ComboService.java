@@ -69,6 +69,15 @@ public class ComboService extends AccessibilityService
         return instance != null;
     }
 
+    /**
+     * 球现在真的挂在屏幕上吗。
+     * 界面上的"开启/关闭"按钮按它来显示，而不是按设置项 ——
+     * 设置是"想不想开"，这里是"实际开没开"，两者经常不一致。
+     */
+    public static boolean ballShown() {
+        return instance != null && instance.ball != null && instance.ball.isShown();
+    }
+
     public static void refresh() {
         if (instance != null) {
             instance.doRefresh();

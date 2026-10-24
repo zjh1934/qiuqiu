@@ -35,7 +35,6 @@ public class MainActivity extends Activity
     private Prefs prefs;
 
     private Button btnOn;
-    private Button bAcc;
     private TextView tvStatus;
 
     private LinearLayout tabBar;
@@ -73,21 +72,30 @@ public class MainActivity extends Activity
         Haptics.init(getApplicationContext(), prefs.haptics());
         Log.i("ui", "主界面打开");
 
+        // 外层：上面可滚动，底部导航固定。
+        // 导航放最底下 —— 一只手够得着，也不用滚回顶部才能切页
+        LinearLayout screen = new LinearLayout(this);
+        screen.setOrientation(LinearLayout.VERTICAL);
+        screen.setBackgroundColor(Theme.BG);
+
         ScrollView sv = new ScrollView(this);
         sv.setBackgroundColor(Theme.BG);
+        sv.setFillViewport(true);
+        screen.addView(sv, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         int p = dp(14);
-        root.setPadding(p, p, p, dp(24));
+        root.setPadding(p, p, p, dp(12));
         sv.addView(root);
 
-        root.addView(brandHeader(), lp(0, 0, 0, dp(12)));
         root.addView(cardTop(), lp(0, 0, 0, dp(12)));
-        root.addView(tabBar(), lp(0, 0, 0, dp(10)));
+
         body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
         root.addView(body);
+        root.addView(footer(), lp(0, dp(16), 0, 0));
 
         pages[0] = pageRead();
         pages[1] = pageZoom();
@@ -96,8 +104,13 @@ public class MainActivity extends Activity
             body.addView(pages[i]);
         }
 
+        // 必须先建导航栏再 switchTab：switchTab 要改页签的外观，
+        // 顺序反了 tabs[] 还是空的，直接空指针
+        screen.addView(bottomBar());
+
         switchTab(savedTab);
-        setContentView(sv);
+
+        setContentView(screen);
 
         TtsManager.setListener(this);
         TtsManager.init(getApplicationContext());
@@ -127,14 +140,15 @@ public class MainActivity extends Activity
         btnOn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                // 无障碍没开的话，改开关毫无意义 —— 直接带去开
+                // 按钮文字跟着"现在到底有没有球"走，所以点它只有两种结果：
+                // 有球 → 关掉；没球 → 打开（顺带把"该出来却没出来"修一次）
                 if (!accOn()) {
                     toast("先去开启无障碍服务，球才有地方挂");
                     openAccSettings();
                     return;
                 }
-                boolean on = !prefs.ballOn();
-                prefs.setBallOn(on);
+                boolean shown = ComboService.isRunning() && ComboService.ballShown();
+                prefs.setBallOn(!shown);
                 ComboService.refresh();
                 // 服务可能刚被系统拉起来，稍等再刷一次状态
                 v.postDelayed(new Runnable() {
@@ -153,15 +167,6 @@ public class MainActivity extends Activity
         tvStatus.setLineSpacing(dp(2), 1f);
         c.addView(tvStatus);
 
-        bAcc = flatBtn("去开启无障碍服务");
-        bAcc.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                openAccSettings();
-            }
-        });
-        c.addView(bAcc, lp(0, dp(10), 0, 0));
-
         return c;
     }
 
@@ -176,12 +181,24 @@ public class MainActivity extends Activity
     }
 
     private void refreshStatus() {
-        boolean on = prefs.ballOn();
-        Log.i("ui", "状态刷新 开关=" + on + " 无障碍=" + accOn()
-                + " 服务=" + ComboService.isRunning());
-        btnOn.setText(on ? "关闭悬浮球" : "开启悬浮球");
-
         boolean acc = accOn();
+        boolean running = ComboService.isRunning();
+        boolean shown = acc && running && ComboService.ballShown();
+        boolean on = prefs.ballOn();
+        Log.i("ui", "状态刷新 设置=" + on + " 无障碍=" + acc
+                + " 服务=" + running + " 球=" + shown);
+
+        // 文字只认事实：服务真的把球挂到屏幕上，才算"开着"。
+        // 原来只看设置项，第一次装好还没开无障碍时也写着"关闭悬浮球"，
+        // 用户点下去反而把它关了，完全对不上。
+        if (!acc) {
+            btnOn.setText("去开启无障碍服务");
+        } else if (shown) {
+            btnOn.setText("关闭悬浮球");
+        } else {
+            btnOn.setText("开启悬浮球");
+        }
+
         StringBuilder sb = new StringBuilder();
         sb.append(acc ? "● 无障碍已开启" : "○ 无障碍未开启").append("\n");
         if (acc) {
@@ -193,17 +210,14 @@ public class MainActivity extends Activity
         tvStatus.setText(sb.toString());
         tvStatus.setTextColor(Theme.TEXT_2);
 
-        // 开启/关闭按钮随状态换肤：关时是品牌渐变"开启"，开时是描边"关闭"
-        if (on) {
+        // 有球时是描边红字"关闭"，没球时是品牌渐变"开启"
+        if (shown) {
             btnOn.setBackgroundDrawable(Theme.rounded(Theme.SURFACE_2, dp(12), Theme.DANGER, 1));
             btnOn.setTextColor(Theme.DANGER);
         } else {
             btnOn.setBackgroundDrawable(Theme.brandGradientPill(dp(12)));
             btnOn.setTextColor(Color.WHITE);
         }
-
-        // 无障碍开着就把这个按钮收起来，别占地方
-        bAcc.setVisibility(acc ? View.GONE : View.VISIBLE);
     }
 
     /** 粗略判断：本包名的服务有没有出现在已启用列表里 */
@@ -235,7 +249,9 @@ public class MainActivity extends Activity
             Button b = new Button(this);
             b.setText(names[i]);
             b.setAllCaps(false);
-            b.setTextSize(14);
+            b.setTextSize(15);
+            // 底部导航要够高，手指才点得稳
+            b.setMinHeight(dp(48));
             b.setBackgroundDrawable(Theme.rounded(Theme.TRANSPARENT, dp(10), 0, 0));
             LinearLayout.LayoutParams l =
                     new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
@@ -261,7 +277,7 @@ public class MainActivity extends Activity
         for (int i = 0; i < tabs.length; i++) {
             boolean active = (i == idx);
             tabs[i].setTextColor(active ? Color.WHITE : Theme.TEXT_2);
-            tabs[i].setTextSize(active ? 15 : 14);
+            tabs[i].setTextSize(active ? 16 : 15);
             tabs[i].setBackgroundDrawable(active
                     ? Theme.brandGradientPill(dp(10))
                     : Theme.rounded(Theme.TRANSPARENT, dp(10), 0, 0));
@@ -852,48 +868,35 @@ public class MainActivity extends Activity
         return b;
     }
 
-    /** 顶部品牌横幅（纯装饰，不参与任何功能逻辑）。 */
-    private View brandHeader() {
-        LinearLayout c = new LinearLayout(this);
-        c.setOrientation(LinearLayout.VERTICAL);
-        c.setBackgroundDrawable(Theme.brandGradientPill(dp(18)));
-        c.setPadding(dp(18), dp(20), dp(18), dp(20));
+    /**
+     * 底部导航：三个页签固定在最下面。
+     *
+     * 原来夹在状态卡和正文中间，既不像导航也不像内容，
+     * 而且切页要先滚回顶部才点得到。
+     */
+    private View bottomBar() {
+        LinearLayout wrap = new LinearLayout(this);
+        wrap.setOrientation(LinearLayout.VERTICAL);
+        wrap.setBackgroundColor(Theme.BG);
+        int h = dp(10);
+        wrap.setPadding(h, dp(6), h, h);
+        wrap.addView(tabBar());
+        return wrap;
+    }
 
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-
-        TextView title = new TextView(this);
-        title.setText("看得清");
-        title.setTextSize(26);
-        title.setTextColor(Color.WHITE);
-        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        row.addView(title);
-
-        TextView badge = new TextView(this);
-        badge.setText(" 2.1 ");
-        badge.setTextSize(13);
-        badge.setTextColor(Color.WHITE);
-        badge.setBackgroundDrawable(Theme.rounded(0x33FFFFFF, dp(10), 0, 0));
-        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        blp.leftMargin = dp(8);
-        badge.setLayoutParams(blp);
-        row.addView(badge);
-
-        c.addView(row);
-
-        TextView sub = new TextView(this);
-        sub.setText("点字即读 · 按住放大 · 拖动挪位");
-        sub.setTextSize(13);
-        sub.setTextColor(0xCCFFFFFF);
-        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        slp.topMargin = dp(8);
-        sub.setLayoutParams(slp);
-        c.addView(sub);
-
-        return c;
+    /** 最下面一行小字。品牌横幅删掉之后，版本号挪到这儿 */
+    private View footer() {
+        TextView t = new TextView(this);
+        String ver = "";
+        try {
+            ver = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception ignored) {
+        }
+        t.setText("看得清 " + ver + " · 不联网，不上传");
+        t.setTextSize(12);
+        t.setTextColor(Theme.TEXT_3);
+        t.setGravity(Gravity.CENTER);
+        return t;
     }
 
     /** 主操作按钮：品牌渐变 + 白字，用于"开启/关闭悬浮球"这种关键动作。 */
