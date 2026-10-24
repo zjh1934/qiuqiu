@@ -290,6 +290,10 @@ public class ComboService extends AccessibilityService
      */
     @Override
     public void onZoomStart(float fx, float fy) {
+        // 触感排在最前面：这是用户唯一的"放大已生效"信号，
+        // 排在末尾的话，前面任何一步出问题它就永远震不到
+        Haptics.zoom();
+
         Log.state(stName(state), stName(ST_IDLE), "要放大，先清干净");
         boolean wasSpeaking = (state == ST_SPEAKING);
         stopSpeakingInternal();
@@ -310,9 +314,6 @@ public class ComboService extends AccessibilityService
         if (ball != null) {
             ball.setState(BallView.ST_ACTIVE);
         }
-        // 画面刚变大的这一下就震。用户"感觉到震动" = 放大已经生效，
-        // 不用低头确认球亮没亮。原来这里一次都没震过，等于没接上。
-        Haptics.zoom();
     }
 
     @Override

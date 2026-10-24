@@ -82,6 +82,7 @@ public class MainActivity extends Activity
     // 球页
     private TextView tvSize, tvAlpha, tvIdle;
     private Button btnSnap, btnComp, btnHaptic;
+    private TextView tvHapticDiag;
     private int colorIndex = 0;
 
     @Override
@@ -926,6 +927,9 @@ public class MainActivity extends Activity
         });
         c3.addView(btnSnap, lp(0, 0, 0, dp(10)));
 
+        LinearLayout hapticRow = new LinearLayout(this);
+        hapticRow.setOrientation(LinearLayout.HORIZONTAL);
+
         btnHaptic = flatBtn("");
         updateHapticText();
         btnHaptic.setOnClickListener(new View.OnClickListener() {
@@ -935,14 +939,41 @@ public class MainActivity extends Activity
                 Haptics.setEnabled(prefs.haptics());
                 updateHapticText();
                 if (prefs.haptics()) {
-                    // 开的时候先震"按住放大"的那一下：这是最重要的一次触感，
-                    // 让他当场确认这个功能真的接上了
                     Haptics.zoom();
                 }
                 ComboService.refresh();
             }
         });
-        c3.addView(btnHaptic);
+        LinearLayout.LayoutParams hl =
+                new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        hl.rightMargin = dp(6);
+        hapticRow.addView(btnHaptic, hl);
+
+        // 不管开关状态都能当场试一下：不然"感觉不到震动"根本无从判断
+        // 是功能没做、被系统拦了，还是机器本身震不动
+        Button bTest = flatBtn("试一下");
+        bTest.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                String err = Haptics.test();
+                tvHapticDiag.setText(Haptics.diag());
+                toast(err.length() == 0
+                        ? "已震一下（就是按住放大那一下）"
+                        : "震动失败：" + err);
+            }
+        });
+        LinearLayout.LayoutParams tl =
+                new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        tl.leftMargin = dp(6);
+        hapticRow.addView(bTest, tl);
+        c3.addView(hapticRow);
+
+        tvHapticDiag = new TextView(this);
+        tvHapticDiag.setTextSize(12);
+        tvHapticDiag.setTextColor(Theme.TEXT_2);
+        tvHapticDiag.setLineSpacing(dp(2), 1f);
+        tvHapticDiag.setText(Haptics.diag());
+        c3.addView(tvHapticDiag, lp(0, dp(10), 0, 0));
         page.addView(c3, lp(0, 0, 0, dp(12)));
 
         // 卡 4：其他（恢复默认 + 折叠的诊断入口）
@@ -1090,7 +1121,7 @@ public class MainActivity extends Activity
 
     private void updateHapticText() {
         if (!Haptics.available()) {
-            btnHaptic.setText("震动反馈：这台手机不支持");
+            btnHaptic.setText("震动反馈：拿不到马达");
             btnHaptic.setEnabled(false);
             btnHaptic.setAlpha(0.45f);
             return;
@@ -1098,6 +1129,9 @@ public class MainActivity extends Activity
         btnHaptic.setEnabled(true);
         btnHaptic.setAlpha(1f);
         btnHaptic.setText("震动反馈：" + (prefs.haptics() ? "开" : "关"));
+        if (tvHapticDiag != null) {
+            tvHapticDiag.setText(Haptics.diag());
+        }
     }
 
     // ---------- 诊断与日志（折叠，默认只露一个小入口） ----------
