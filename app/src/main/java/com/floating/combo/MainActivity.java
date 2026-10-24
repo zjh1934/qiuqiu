@@ -2,6 +2,8 @@ package com.floating.combo;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.content.res.ColorStateList;
+import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.PorterDuff;
 import android.graphics.drawable.GradientDrawable;
@@ -17,6 +19,7 @@ import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CompoundButton;
 import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
@@ -167,6 +170,15 @@ public class MainActivity extends Activity
         swBall = new Switch(this);
         swBall.setShowText(false);
         swBall.setContentDescription("悬浮球开关");
+        // 系统 Switch 默认用主题的青绿色，跟品牌蓝对不上，手动染色
+        int[][] states = new int[][]{
+                new int[]{android.R.attr.state_checked},
+                new int[]{}
+        };
+        swBall.setThumbTintList(new ColorStateList(states,
+                new int[]{Theme.ACCENT, Theme.TEXT_2}));
+        swBall.setTrackTintList(new ColorStateList(states,
+                new int[]{0x6638BDF8, Theme.SURFACE_2}));
         swBall.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton b, boolean checked) {
@@ -254,18 +266,18 @@ public class MainActivity extends Activity
         // 无障碍没开时，开关点不了，给一个直达设置的按钮
         bAcc.setVisibility(acc ? View.GONE : View.VISIBLE);
 
+        // 只留两行：无障碍状态 + 球状态。原来还重复了一遍"点球朗读/按住放大"，
+        // 上面开关卡里已经写过，白占一行高度
         StringBuilder sb = new StringBuilder();
-        sb.append(acc ? "● 无障碍已开启" : "○ 无障碍未开启").append("\n");
-        if (acc) {
-            sb.append(ComboService.stateText());
+        sb.append(acc ? "● 无障碍已开启" : "○ 无障碍未开启");
+        sb.append("　");
+        if (!acc) {
+            sb.append("○ 球未显示");
         } else {
-            sb.append("○ 球未显示（要先开无障碍）");
+            sb.append(ComboService.stateText());
         }
         if (acc && running && prefs.ballOn() && !shown) {
-            sb.append("\n○ 开关是开的，但球没挂上窗口（关一次再开可重试）");
-        }
-        if (shown) {
-            sb.append("\n● 点球选字朗读　● 按住球放大");
+            sb.append("\n○ 球没挂上窗口，关一次再开可重试");
         }
         tvStatus.setText(sb.toString());
         tvStatus.setTextColor(Theme.TEXT_2);
@@ -794,7 +806,12 @@ public class MainActivity extends Activity
             });
             colors.addView(v);
         }
-        c.addView(colors);
+        // 360dp 窄屏上 7 个色块几乎顶满（298/300dp），320dp 会直接裁掉最后一个。
+        // 套一层横向滚动，任何屏宽都不会丢
+        HorizontalScrollView hs = new HorizontalScrollView(this);
+        hs.setHorizontalScrollBarEnabled(false);
+        hs.addView(colors);
+        c.addView(hs);
 
         // 恢复默认
         Button bReset = flatBtn("球相关恢复默认");
@@ -834,9 +851,11 @@ public class MainActivity extends Activity
         if (!Haptics.available()) {
             btnHaptic.setText("点按时震一下：这台手机不支持");
             btnHaptic.setEnabled(false);
+            btnHaptic.setAlpha(0.45f);
             return;
         }
         btnHaptic.setEnabled(true);
+        btnHaptic.setAlpha(1f);
         btnHaptic.setText("点按时震一下：" + (prefs.haptics() ? "开" : "关"));
     }
 
@@ -850,7 +869,15 @@ public class MainActivity extends Activity
 
     /** 折叠入口：默认收起，点开才加载内容 */
     private LinearLayout logSection() {
-        LinearLayout c = card();
+        // 这里不套 card()：pageBall() 本身就是一张卡，再套一层会变成
+        // 双倍内边距 + 两条同色描边，底下看着特别臃肿。改成一条分隔线
+        LinearLayout c = new LinearLayout(this);
+        c.setOrientation(LinearLayout.VERTICAL);
+
+        View line = new View(this);
+        line.setBackgroundColor(Theme.BORDER);
+        c.addView(line, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, dp(1))));
 
         btnLogToggle = flatBtn("诊断与日志  ▸");
         btnLogToggle.setOnClickListener(new View.OnClickListener() {
@@ -864,7 +891,7 @@ public class MainActivity extends Activity
                 }
             }
         });
-        c.addView(btnLogToggle, lp(0, 0, 0, 0));
+        c.addView(btnLogToggle, lp(0, dp(12), 0, 0));
 
         logBody = new LinearLayout(this);
         logBody.setOrientation(LinearLayout.VERTICAL);
@@ -1045,7 +1072,8 @@ public class MainActivity extends Activity
         }
         t.setText("看得清 " + ver + " · 不联网，不上传");
         t.setTextSize(12);
-        t.setTextColor(Theme.TEXT_3);
+        // 12sp 小字用 TEXT_3（对比度 4.1:1）达不到 AA，换 TEXT_2（6.1:1）
+        t.setTextColor(Theme.TEXT_2);
         t.setGravity(Gravity.CENTER);
         return t;
     }
