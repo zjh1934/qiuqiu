@@ -1,17 +1,22 @@
 package com.floating.combo;
 
 import android.app.Activity;
+import android.content.ClipData;
+import android.content.Context;
+import android.content.ClipboardManager;
 import android.content.Intent;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.PorterDuff;
 import android.graphics.drawable.GradientDrawable;
+import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
 import android.view.animation.DecelerateInterpolator;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
@@ -19,6 +24,7 @@ import android.widget.Button;
 import android.widget.CompoundButton;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
@@ -52,9 +58,9 @@ public class MainActivity extends Activity
     /** 高亮条正在滑动时置 true，别让布局回调把它中途掐掉 */
     private boolean indicatorMoving = false;
     private ScrollView sv;
-    private final Button[] tabs = new Button[3];
+    private final Button[] tabs = new Button[4];
     private LinearLayout body;
-    private final LinearLayout[] pages = new LinearLayout[3];
+    private final LinearLayout[] pages = new LinearLayout[4];
     private int curTab = 0;
     /** 跨重建记住当前 Tab，rebuild()（finish+startActivity）后恢复，不踢回第一页 */
     private static int savedTab = 0;
@@ -86,6 +92,17 @@ public class MainActivity extends Activity
         Haptics.init(getApplicationContext(), prefs.haptics());
         Log.i("ui", "主界面打开");
 
+        // 上下系统栏跟界面同色。
+        // 原来走主题默认：经典三键导航时底部是一条黑带，顶部也跟内容割开，
+        // 整个 App 像被框在一个黑盒子里。状态栏用背景色，导航栏用底栏色，接缝就没了。
+        Window win = getWindow();
+        win.setStatusBarColor(Theme.BG);
+        win.setNavigationBarColor(Theme.SURFACE);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            // 导航栏和底栏之间那条分隔线也统一，不然会多一道白边
+            win.setNavigationBarDividerColor(Theme.BORDER);
+        }
+
         // 外层：上面可滚动，底部导航固定。
         // 导航放最底下 —— 一只手够得着，也不用滚回顶部才能切页
         LinearLayout screen = new LinearLayout(this);
@@ -115,6 +132,7 @@ public class MainActivity extends Activity
         pages[0] = pageRead();
         pages[1] = pageZoom();
         pages[2] = pageBall();
+        pages[3] = pageAbout();
         for (int i = 0; i < pages.length; i++) {
             body.addView(pages[i]);
         }
@@ -321,7 +339,7 @@ public class MainActivity extends Activity
         tabRow = new LinearLayout(this);
         tabRow.setOrientation(LinearLayout.HORIZONTAL);
 
-        String[] names = new String[]{"朗读", "放大", "球"};
+        String[] names = new String[]{"朗读", "放大", "球", "联系"};
         for (int i = 0; i < names.length; i++) {
             final int idx = i;
             Button b = new Button(this);
@@ -940,6 +958,88 @@ public class MainActivity extends Activity
         return page;
     }
 
+    /** 联系页一键复制用。手打这一串对低视力用户基本不现实 */
+    private static final String WECHAT_ID = "Vssfsg";
+
+    /**
+     * 联系页：二维码 + 一键复制微信号。
+     * 二维码负责"扫"，复制按钮负责"存" —— 两条路都给，别让人抄。
+     */
+    private LinearLayout pageAbout() {
+        LinearLayout page = pageColumn();
+
+        LinearLayout c1 = card();
+        c1.addView(section("联系作者"));
+
+        TextView tip = new TextView(this);
+        tip.setTextSize(13);
+        tip.setTextColor(Theme.TEXT_2);
+        tip.setText("微信扫下面这个码，加我时说一句「看得清」。\n"
+                + "用着有问题、想加点什么，都可以直接讲。");
+        tip.setLineSpacing(dp(2), 1f);
+        c1.addView(tip, lp(0, dp(6), 0, dp(16)));
+
+        ImageView qr = new ImageView(this);
+        qr.setImageResource(R.drawable.wechat_qr);
+        qr.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        qr.setBackgroundDrawable(Theme.rounded(0xFFFFFFFF, dp(12), 0, 0));
+        qr.setContentDescription("作者的微信二维码");
+        int qs = dp(196);
+        LinearLayout.LayoutParams qlp = new LinearLayout.LayoutParams(qs, qs);
+        qlp.gravity = Gravity.CENTER_HORIZONTAL;
+        c1.addView(qr, qlp);
+
+        TextView id = new TextView(this);
+        id.setText("微信号　" + WECHAT_ID);
+        id.setTextSize(16);
+        id.setTextColor(Theme.TEXT);
+        id.setGravity(Gravity.CENTER);
+        c1.addView(id, lp(0, dp(16), 0, 0));
+
+        Button bCopy = flatBtn("复制微信号");
+        bCopy.setTextSize(15);
+        bCopy.setBackgroundDrawable(Theme.brandGradientPill(dp(10)));
+        bCopy.setTextColor(Color.WHITE);
+        bCopy.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                try {
+                    ClipboardManager cm =
+                            (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                    cm.setPrimaryClip(ClipData.newPlainText("微信号", WECHAT_ID));
+                    Haptics.tap();
+                    toast("微信号已复制：" + WECHAT_ID);
+                } catch (Exception e) {
+                    toast("复制失败，手动记一下：" + WECHAT_ID);
+                }
+            }
+        });
+        c1.addView(bCopy, lp(0, dp(14), 0, 0));
+        page.addView(c1, lp(0, 0, 0, dp(12)));
+
+        LinearLayout c2 = card();
+        c2.addView(section("关于"), lp(0, 0, 0, dp(10)));
+        TextView about = new TextView(this);
+        about.setTextSize(13);
+        about.setTextColor(Theme.TEXT_2);
+        about.setLineSpacing(dp(3), 1f);
+        about.setText("看得清 " + versionName() + "\n"
+                + "不联网、不上传：屏幕上读到的字只在内存里活几秒，读完就没了。\n"
+                + "开源：github.com/zjh1934/qiuqiu");
+        c2.addView(about);
+        page.addView(c2);
+
+        return page;
+    }
+
+    private String versionName() {
+        try {
+            return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
     /** 重画整个界面，把新设置反映出来 */
     private void rebuild() {
         // finish + startActivity 会闪一下任务切换动画；recreate 只重建界面本身
@@ -1170,12 +1270,7 @@ public class MainActivity extends Activity
     /** 最下面一行小字。品牌横幅删掉之后，版本号挪到这儿 */
     private View footer() {
         TextView t = new TextView(this);
-        String ver = "";
-        try {
-            ver = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
-        } catch (Exception ignored) {
-        }
-        t.setText("看得清 " + ver + " · 不联网，不上传");
+        t.setText("看得清 " + versionName() + " · 不联网，不上传");
         t.setTextSize(12);
         // 12sp 小字用 TEXT_3（对比度 4.1:1）达不到 AA，换 TEXT_2（6.1:1）
         t.setTextColor(Theme.TEXT_2);

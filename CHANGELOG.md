@@ -1,5 +1,24 @@
 # 更新记录
 
+## 2.5
+
+### 系统栏不再是一条黑带
+- 状态栏用背景色 `#0D1117`，导航栏用底栏色 `#161B22`，加上 28+ 的分隔线统一
+- 原来走主题默认：经典三键导航时底部是一条纯黑，顶部也跟内容割开，
+  整个 App 像被框在黑盒子里
+
+### 新增第四个页签「联系」
+- 作者微信二维码（裁掉了原图那句说明，留了扫码白边）
+- 微信号 `Vssfsg` 大字显示 + 一键复制按钮（复制后震动一下并提示）
+- 「关于」里带版本号、隐私承诺、开源地址
+
+### 下载入口修正
+- 原来 README 里写 `releases/xxx.apk`，而 `releases` 是 GitHub 的保留路径，
+  仓库右侧的 Releases 页也是空的（从没建过 Release），点进去像"假链接"
+- 安装包目录改名 `apk/`；最新版走 GitHub Release 的固定地址
+  `releases/latest/download/看得清.apk`，以后发版不用再改 README
+- versionCode 9 / versionName 2.5
+
 ## 2.4
 
 ### 修掉一个"打开就是废的"bug
@@ -150,11 +169,11 @@ Android 只有一个 `TYPE_SYSTEM` 同时代表状态栏和导航栏。改成 `T
 
 这台机器上装了 JDK 17 + Android SDK 30 / build-tools 30.0.3，
 可以直接出包：`bash build_apk.sh`（aapt2 → javac → d8 → zipalign → apksigner）。
-版本号从 `app/build.gradle` 读，产物直接落到 `releases/看得清-<版本>.apk`。
+版本号从 `app/build.gradle` 读，产物直接落到 `apk/看得清-<版本>.apk`。
 
 ### 关于旧版本
 
-**每个版本的安装包都留在 `releases/` 里，不覆盖、不删除。**
+**每个版本的安装包都留在 `apk/` 里，不覆盖、不删除。**
 2.0（原名「球球」）也在，出问题可以退回。
 
 ---
