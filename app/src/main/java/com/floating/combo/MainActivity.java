@@ -3,7 +3,6 @@ package com.floating.combo;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.res.ColorStateList;
-import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.PorterDuff;
 import android.graphics.drawable.GradientDrawable;
@@ -307,20 +306,20 @@ public class MainActivity extends Activity
      */
     private View tabBar() {
         tabHost = new FrameLayout(this);
-        tabHost.setBackgroundDrawable(
-                Theme.rounded(Theme.SURFACE_2, dp(14), Theme.BORDER, 1));
-        int pad = dp(5);
+        // 不再套圆角框：底栏本身已经是独立底色，里面再画一个框就是三层套娃，
+        // 视觉上又厚又碎。高亮条自己就是那块"选中"的形状。
+        tabHost.setBackgroundColor(Theme.TRANSPARENT);
 
         tabIndicator = new View(this);
-        tabIndicator.setBackgroundDrawable(Theme.brandGradientPill(dp(10)));
-        FrameLayout.LayoutParams ilp = new FrameLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT);
-        ilp.topMargin = pad;
-        ilp.bottomMargin = pad;
+        tabIndicator.setBackgroundDrawable(Theme.brandGradientPill(dp(12)));
+        FrameLayout.LayoutParams ilp = new FrameLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT);
+        ilp.topMargin = dp(4);
+        ilp.bottomMargin = dp(4);
         tabHost.addView(tabIndicator, ilp);
 
         tabRow = new LinearLayout(this);
         tabRow.setOrientation(LinearLayout.HORIZONTAL);
-        tabRow.setPadding(pad, pad, pad, pad);
 
         String[] names = new String[]{"朗读", "放大", "球"};
         for (int i = 0; i < names.length; i++) {
@@ -329,13 +328,18 @@ public class MainActivity extends Activity
             b.setText(names[i]);
             b.setAllCaps(false);
             b.setTextSize(15);
-            // 背景必须清掉：留着默认按钮底色会盖住下面的高亮条
-            b.setBackgroundDrawable(Theme.rounded(Theme.TRANSPARENT, dp(10), 0, 0));
-            b.setMinHeight(dp(48));
-            LinearLayout.LayoutParams l =
-                    new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-            l.setMargins(dp(4), 0, dp(4), 0);
-            b.setLayoutParams(l);
+            // 背景必须清掉（默认灰底会盖住高亮条），但要补一层按下反馈，
+            // 否则按住页签时界面是"死的"，只有抬手后才看到高亮条滑过去
+            android.graphics.drawable.StateListDrawable bg =
+                    new android.graphics.drawable.StateListDrawable();
+            bg.addState(new int[]{android.R.attr.state_pressed},
+                    Theme.rounded(0x1FFFFFFF, dp(12), 0, 0));
+            bg.addState(new int[]{}, Theme.rounded(Theme.TRANSPARENT, dp(12), 0, 0));
+            b.setBackgroundDrawable(bg);
+            b.setMinHeight(dp(52));
+            // 不加左右 margin：高亮条的位移直接用 getLeft()，多一层边距就多一次换算
+            b.setLayoutParams(new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
             b.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
@@ -345,8 +349,9 @@ public class MainActivity extends Activity
             tabs[i] = b;
             tabRow.addView(b);
         }
+        tabRow.setGravity(Gravity.CENTER_VERTICAL);
         tabHost.addView(tabRow, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         // 布局完成后才知道每个页签多宽，这时把高亮条摆到位
         tabHost.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
@@ -432,65 +437,133 @@ public class MainActivity extends Activity
 
     // ---------- 朗读页 ----------
 
-    private LinearLayout pageRead() {
-        LinearLayout c = card();
+    /** 一页的容器：竖直排，自己不画底（每张卡各带底色） */
+    private LinearLayout pageColumn() {
+        LinearLayout p = new LinearLayout(this);
+        p.setOrientation(LinearLayout.VERTICAL);
+        return p;
+    }
 
+    /** 卡片小标题。没有它，一张卡里的控件就是一堆没有关系的方块 */
+    private TextView section(String text) {
+        TextView t = new TextView(this);
+        t.setText(text);
+        t.setTextSize(13);
+        t.setTextColor(Theme.TEXT_2);
+        return t;
+    }
+
+    private TextView label(String text) {
+        TextView t = new TextView(this);
+        t.setText(text);
+        t.setTextSize(15);
+        t.setTextColor(Theme.TEXT);
+        return t;
+    }
+
+    /** 统一样式的下拉框 */
+    private Spinner spinner() {
+        Spinner sp = new Spinner(this);
+        sp.setMinimumHeight(dp(48));
+        return sp;
+    }
+
+    /**
+     * 给下拉框套一层带箭头的盒子。
+     * 原生 Spinner 的箭头是画在默认背景里的，一旦换成纯圆角矩形，
+     * 它就变成"一个静态文本框"，用户不知道可以点。
+     */
+    private View spinnerBox(Spinner sp) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.HORIZONTAL);
+        box.setGravity(Gravity.CENTER_VERTICAL);
+        box.setBackgroundDrawable(Theme.rounded(Theme.SURFACE_2, dp(10), Theme.BORDER, 1));
+        box.setPadding(dp(12), 0, dp(12), 0);
+        box.setMinimumHeight(dp(48));
+
+        sp.setBackgroundColor(Color.TRANSPARENT);
+        sp.setPadding(0, dp(4), 0, dp(4));
+        box.addView(sp, new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView arrow = new TextView(this);
+        arrow.setText("\u25BE");
+        arrow.setTextSize(14);
+        arrow.setTextColor(Theme.TEXT_2);
+        box.addView(arrow);
+        return box;
+    }
+
+    /**
+     * 朗读页：原来是一张巨卡，引擎/音色/语速/音调/试听/停止 9 个控件全糊在一起，
+     * 中间还夹着两个全宽的"默认"按钮。现在按主题拆成三张卡。
+     */
+    private LinearLayout pageRead() {
+        LinearLayout page = pageColumn();
+
+        // 卡 1：声音
+        LinearLayout c1 = card();
+        c1.addView(section("声音"));
         tvEngineInfo = new TextView(this);
         tvEngineInfo.setTextSize(12);
         tvEngineInfo.setTextColor(Theme.TEXT_2);
-        c.addView(tvEngineInfo, lp(0, 0, 0, dp(10)));
+        c1.addView(tvEngineInfo, lp(0, dp(4), 0, dp(16)));
 
-        spEngine = new Spinner(this);
-        spEngine.setBackgroundDrawable(Theme.rounded(Theme.SURFACE_2, dp(10), Theme.BORDER, 1));
-        c.addView(rowText("语音引擎", ""), lp(0, 0, 0, dp(4)));
-        c.addView(spEngine, lp(0, 0, 0, dp(10)));
+        c1.addView(label("语音引擎"), lp(0, 0, 0, dp(6)));
+        spEngine = spinner();
+        c1.addView(spinnerBox(spEngine), lp(0, 0, 0, dp(16)));
 
-        spVoice = new Spinner(this);
-        spVoice.setBackgroundDrawable(Theme.rounded(Theme.SURFACE_2, dp(10), Theme.BORDER, 1));
-        c.addView(rowText("音色", ""), lp(0, 0, 0, dp(4)));
-        c.addView(spVoice, lp(0, 0, 0, dp(10)));
+        c1.addView(label("音色"), lp(0, 0, 0, dp(6)));
+        spVoice = spinner();
+        c1.addView(spinnerBox(spVoice));
+        page.addView(c1, lp(0, 0, 0, dp(12)));
+
+        // 卡 2：语速与音调（重置收进滑杆行内，不再占一整行）
+        LinearLayout c2 = card();
+        c2.addView(section("语速与音调"), lp(0, 0, 0, dp(14)));
 
         tvRate = new TextView(this);
-        c.addView(sliderRow("语速", tvRate, 50, 200, (int) (prefs.rate() * 100),
+        c2.addView(sliderRow("语速", tvRate, 50, 200, (int) (prefs.rate() * 100),
                 new OnVal() {
                     @Override
                     public void on(int v) {
                         prefs.setRate(v / 100f);
                     }
-                }), lp(0, 0, 0, dp(4)));
-
-        Button bRate = flatBtn("语速默认 1.00");
-        bRate.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                prefs.setRate(1.0f);
-                rebuild();
-                toast("语速已恢复 1.00");
-            }
-        });
-        c.addView(bRate, lp(0, 0, 0, dp(10)));
+                }, "重置", new Runnable() {
+                    @Override
+                    public void run() {
+                        prefs.setRate(1.0f);
+                        rebuild();
+                        toast("语速已恢复 1.00");
+                    }
+                }), lp(0, 0, 0, dp(16)));
 
         tvPitch = new TextView(this);
-        c.addView(sliderRow("音调", tvPitch, 50, 200, (int) (prefs.pitch() * 100),
+        c2.addView(sliderRow("音调", tvPitch, 50, 200, (int) (prefs.pitch() * 100),
                 new OnVal() {
                     @Override
                     public void on(int v) {
                         prefs.setPitch(v / 100f);
                     }
-                }), lp(0, 0, 0, dp(4)));
+                }, "重置", new Runnable() {
+                    @Override
+                    public void run() {
+                        prefs.setPitch(1.0f);
+                        rebuild();
+                        toast("音调已恢复 1.00");
+                    }
+                }));
+        page.addView(c2, lp(0, 0, 0, dp(12)));
 
-        Button bPitch = flatBtn("音调默认 1.00");
-        bPitch.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                prefs.setPitch(1.0f);
-                rebuild();
-                toast("音调已恢复 1.00");
-            }
-        });
-        c.addView(bPitch, lp(0, 0, 0, dp(12)));
+        // 卡 3：试听
+        LinearLayout c3 = card();
+        c3.addView(section("试听"), lp(0, 0, 0, dp(12)));
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
 
         Button bTry = flatBtn("试听一句");
+        bTry.setBackgroundDrawable(Theme.brandGradientPill(dp(10)));
+        bTry.setTextColor(Color.WHITE);
         bTry.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -501,7 +574,10 @@ public class MainActivity extends Activity
                 TtsManager.speak("这是一句试听，声音正常就可以用了", prefs.rate(), prefs.pitch());
             }
         });
-        c.addView(bTry, lp(0, 0, 0, dp(10)));
+        LinearLayout.LayoutParams l1 = new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        l1.rightMargin = dp(6);
+        row.addView(bTry, l1);
 
         Button bStop = flatBtn("停止");
         bStop.setOnClickListener(new View.OnClickListener() {
@@ -510,9 +586,15 @@ public class MainActivity extends Activity
                 TtsManager.stop();
             }
         });
-        c.addView(bStop, lp(0, 0, 0, 0));
+        LinearLayout.LayoutParams l2 = new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        l2.leftMargin = dp(6);
+        row.addView(bStop, l2);
 
-        return c;
+        c3.addView(row);
+        page.addView(c3);
+
+        return page;
     }
 
     private void reloadEngines() {
@@ -633,42 +715,48 @@ public class MainActivity extends Activity
 
     // ---------- 放大页 ----------
 
+    /**
+     * 放大页：倍率、手感各一张卡。
+     * 原来说明文字、两个滑杆、开关、恢复默认全挤一张卡里。
+     */
     private LinearLayout pageZoom() {
-        LinearLayout c = card();
+        LinearLayout page = pageColumn();
 
+        LinearLayout c1 = card();
+        c1.addView(section("放大倍率"));
         TextView tip = new TextView(this);
         tip.setTextSize(12);
         tip.setTextColor(Theme.TEXT_2);
-        tip.setText("按住球不动 → 放大，手指挪动 → 画面跟着走，松手 → 恢复。\n"
-                + "放大期间不会朗读，也不会进入选取态。");
-        tip.setLineSpacing(dp(2), 1f);
-        c.addView(tip, lp(0, 0, 0, dp(12)));
+        tip.setText("按住球 → 放大，手指挪到哪就看到哪，松手还原。");
+        c1.addView(tip, lp(0, dp(4), 0, dp(16)));
 
         tvScale = new TextView(this);
-        c.addView(sliderRow("放大倍率", tvScale, 15, 50, (int) (prefs.scale() * 10),
+        c1.addView(sliderRow("倍率", tvScale, 15, 50, (int) (prefs.scale() * 10),
                 new OnVal() {
                     @Override
                     public void on(int v) {
                         prefs.setScale(v / 10f);
                     }
-                }), lp(0, 0, 0, dp(6)));
+                }));
+        page.addView(c1, lp(0, 0, 0, dp(12)));
+
+        LinearLayout c2 = card();
+        c2.addView(section("手感"), lp(0, 0, 0, dp(14)));
 
         tvHold = new TextView(this);
-        c.addView(sliderRow("按住多久算放大", tvHold, 120, 600, prefs.holdMs(),
+        c2.addView(sliderRow("按住多久算放大", tvHold, 120, 600, prefs.holdMs(),
                 new OnVal() {
                     @Override
                     public void on(int v) {
                         prefs.setHoldMs(v);
                     }
-                }), lp(0, 0, 0, dp(12)));
+                }));
 
         TextView tip2 = new TextView(this);
         tip2.setTextSize(12);
         tip2.setTextColor(Theme.TEXT_2);
-        tip2.setText("上面这个越长，越不容易误触发放大；越短，放大越灵敏。\n"
-                + "手快、总是不小心放大的，往长了调。");
-        tip2.setLineSpacing(dp(2), 1f);
-        c.addView(tip2, lp(0, 0, 0, dp(12)));
+        tip2.setText("调长一点更不容易误触发放大；调短放大更灵敏。");
+        c2.addView(tip2, lp(0, dp(8), 0, dp(16)));
 
         btnComp = flatBtn("");
         updateCompText();
@@ -680,9 +768,9 @@ public class MainActivity extends Activity
                 ComboService.refresh();
             }
         });
-        c.addView(btnComp, lp(0, 0, 0, dp(10)));
+        c2.addView(btnComp, lp(0, 0, 0, dp(10)));
 
-        Button bZoomReset = flatBtn("放大相关恢复默认");
+        Button bZoomReset = flatBtn("恢复默认");
         bZoomReset.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -693,9 +781,10 @@ public class MainActivity extends Activity
                 toast("放大的设置已恢复默认");
             }
         });
-        c.addView(bZoomReset, lp(0, 0, 0, 0));
+        c2.addView(bZoomReset);
+        page.addView(c2);
 
-        return c;
+        return page;
     }
 
     private void updateCompText() {
@@ -704,70 +793,50 @@ public class MainActivity extends Activity
 
     // ---------- 球页 ----------
 
+    /**
+     * 球页：外观 / 颜色 / 行为 / 其他 四张卡。
+     * 原来三个滑杆、两个开关、七个色块、恢复默认、诊断入口全在一张卡里。
+     */
     private LinearLayout pageBall() {
-        LinearLayout c = card();
+        LinearLayout page = pageColumn();
+
+        // 卡 1：外观
+        LinearLayout c1 = card();
+        c1.addView(section("外观"), lp(0, 0, 0, dp(14)));
 
         tvSize = new TextView(this);
-        c.addView(sliderRow("球大小", tvSize, 36, 88, prefs.sizeDp(),
+        c1.addView(sliderRow("球大小", tvSize, 36, 88, prefs.sizeDp(),
                 new OnVal() {
                     @Override
                     public void on(int v) {
                         prefs.setSizeDp(v);
                         ComboService.refresh();
                     }
-                }), lp(0, 0, 0, dp(6)));
+                }), lp(0, 0, 0, dp(14)));
 
         tvAlpha = new TextView(this);
-        c.addView(sliderRow("不透明度", tvAlpha, 20, 100, (int) (prefs.alpha() * 100),
+        c1.addView(sliderRow("不透明度", tvAlpha, 20, 100, (int) (prefs.alpha() * 100),
                 new OnVal() {
                     @Override
                     public void on(int v) {
                         prefs.setAlpha(v / 100f);
                         ComboService.refresh();
                     }
-                }), lp(0, 0, 0, dp(6)));
+                }), lp(0, 0, 0, dp(14)));
 
         tvIdle = new TextView(this);
-        c.addView(sliderRow("闲置时", tvIdle, 5, 100, (int) (prefs.idleAlpha() * 100),
+        c1.addView(sliderRow("闲置时", tvIdle, 5, 100, (int) (prefs.idleAlpha() * 100),
                 new OnVal() {
                     @Override
                     public void on(int v) {
                         prefs.setIdleAlpha(v / 100f);
                     }
-                }), lp(0, 0, 0, dp(12)));
+                }));
+        page.addView(c1, lp(0, 0, 0, dp(12)));
 
-        btnSnap = flatBtn("");
-        updateSnapText();
-        btnSnap.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                prefs.setSnapEdge(!prefs.snapEdge());
-                updateSnapText();
-            }
-        });
-        c.addView(btnSnap, lp(0, 0, 0, dp(10)));
-
-        btnHaptic = flatBtn("");
-        updateHapticText();
-        btnHaptic.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                prefs.setHaptics(!prefs.haptics());
-                Haptics.setEnabled(prefs.haptics());
-                updateHapticText();
-                if (prefs.haptics()) {
-                    Haptics.ready();     // 开的时候震一下，让他知道震感是什么样
-                }
-                ComboService.refresh();
-            }
-        });
-        c.addView(btnHaptic, lp(0, 0, 0, dp(10)));
-
-        TextView t = new TextView(this);
-        t.setText("球颜色");
-        t.setTextSize(14);
-        t.setTextColor(Theme.TEXT);
-        c.addView(t, lp(0, 0, 0, dp(8)));
+        // 卡 2：颜色
+        LinearLayout c2 = card();
+        c2.addView(section("颜色"), lp(0, 0, 0, dp(12)));
 
         LinearLayout colors = new LinearLayout(this);
         colors.setOrientation(LinearLayout.HORIZONTAL);
@@ -806,14 +875,49 @@ public class MainActivity extends Activity
             });
             colors.addView(v);
         }
-        // 360dp 窄屏上 7 个色块几乎顶满（298/300dp），320dp 会直接裁掉最后一个。
-        // 套一层横向滚动，任何屏宽都不会丢
+        // 7 个色块 + 间距 = 298dp，320dp 窄屏会切掉最后一个，套一层横向滚动
         HorizontalScrollView hs = new HorizontalScrollView(this);
         hs.setHorizontalScrollBarEnabled(false);
         hs.addView(colors);
-        c.addView(hs);
+        c2.addView(hs);
+        page.addView(c2, lp(0, 0, 0, dp(12)));
 
-        // 恢复默认
+        // 卡 3：行为
+        LinearLayout c3 = card();
+        c3.addView(section("行为"), lp(0, 0, 0, dp(12)));
+
+        btnSnap = flatBtn("");
+        updateSnapText();
+        btnSnap.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                prefs.setSnapEdge(!prefs.snapEdge());
+                updateSnapText();
+            }
+        });
+        c3.addView(btnSnap, lp(0, 0, 0, dp(10)));
+
+        btnHaptic = flatBtn("");
+        updateHapticText();
+        btnHaptic.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                prefs.setHaptics(!prefs.haptics());
+                Haptics.setEnabled(prefs.haptics());
+                updateHapticText();
+                if (prefs.haptics()) {
+                    Haptics.ready();     // 开的时候震一下，让他知道震感是什么样
+                }
+                ComboService.refresh();
+            }
+        });
+        c3.addView(btnHaptic);
+        page.addView(c3, lp(0, 0, 0, dp(12)));
+
+        // 卡 4：其他（恢复默认 + 折叠的诊断入口）
+        LinearLayout c4 = card();
+        c4.addView(section("其他"), lp(0, 0, 0, dp(12)));
+
         Button bReset = flatBtn("球相关恢复默认");
         bReset.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -824,23 +928,22 @@ public class MainActivity extends Activity
                 prefs.setSnapEdge(false);
                 prefs.setColorIndex(0);
                 colorIndex = 0;
+                ComboService.refresh();   // 让屏幕上的球立刻按新设置重画
                 rebuild();
                 toast("球的设置已恢复默认");
             }
         });
-        c.addView(bReset, lp(0, dp(12), 0, dp(10)));
+        c4.addView(bReset);
+        c4.addView(logSection(), lp(0, dp(12), 0, 0));
+        page.addView(c4);
 
-        // 折叠的诊断入口挂在球页底部，平时不占地方
-        c.addView(logSection(), lp(0, dp(12), 0, 0));
-
-        return c;
+        return page;
     }
 
     /** 重画整个界面，把新设置反映出来 */
     private void rebuild() {
-        Intent i = getIntent();
-        finish();
-        startActivity(i);
+        // finish + startActivity 会闪一下任务切换动画；recreate 只重建界面本身
+        recreate();
     }
 
     private void updateSnapText() {
@@ -1055,9 +1158,11 @@ public class MainActivity extends Activity
 
         LinearLayout nav = new LinearLayout(this);
         nav.setOrientation(LinearLayout.VERTICAL);
-        int h = dp(10);
-        nav.setPadding(h, dp(8), h, h);
-        nav.addView(tabBar());
+        nav.setPadding(dp(8), dp(6), dp(8), dp(6));
+        // 必须给确定高度：高亮条是 MATCH_PARENT，如果这里用 WRAP_CONTENT，
+        // FrameLayout 会把高亮条量成"可用高度=整屏"，底栏撑满、正文被挤成 0
+        nav.addView(tabBar(), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
         wrap.addView(nav);
         return wrap;
     }
@@ -1085,6 +1190,18 @@ public class MainActivity extends Activity
     /** 一行：标题 + 当前值 + 滑杆 */
     private LinearLayout sliderRow(String name, final TextView val,
                                    int min, int max, int cur, final OnVal cb) {
+        return sliderRow(name, val, min, max, cur, cb, null, null);
+    }
+
+    /**
+     * 同上，多一个行内"重置"。
+     *
+     * 原来"语速默认 1.00"/"音调默认 1.00"是两个整行按钮，把滑杆之间的间距
+     * 切得七零八落 —— 重置是低频操作，缩成标题行右边的两个字就够。
+     */
+    private LinearLayout sliderRow(String name, final TextView val,
+                                   int min, int max, int cur, final OnVal cb,
+                                   String resetLabel, final Runnable onReset) {
         LinearLayout r = new LinearLayout(this);
         r.setOrientation(LinearLayout.VERTICAL);
 
@@ -1101,6 +1218,22 @@ public class MainActivity extends Activity
         val.setTextColor(Theme.ACCENT);
         val.setGravity(Gravity.RIGHT);
         head.addView(val);
+
+        if (resetLabel != null && onReset != null) {
+            TextView reset = new TextView(this);
+            reset.setText(resetLabel);
+            reset.setTextSize(13);
+            reset.setTextColor(Theme.ACCENT);
+            reset.setPadding(dp(14), dp(10), dp(6), dp(10));
+            reset.setMinHeight(dp(40));
+            reset.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    onReset.run();
+                }
+            });
+            head.addView(reset);
+        }
         r.addView(head);
 
         SeekBar sb = new SeekBar(this);
@@ -1138,7 +1271,7 @@ public class MainActivity extends Activity
     }
 
     private String fmt(String name, int v) {
-        if ("放大倍率".equals(name)) {
+        if ("倍率".equals(name) || "放大倍率".equals(name)) {
             return String.format("%.1fx", v / 10f);
         }
         if ("按住多久算放大".equals(name)) {
