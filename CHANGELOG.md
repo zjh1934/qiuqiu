@@ -16,7 +16,7 @@
 - 原来 README 里写 `releases/xxx.apk`，而 `releases` 是 GitHub 的保留路径，
   仓库右侧的 Releases 页也是空的（从没建过 Release），点进去像"假链接"
 - 安装包目录改名 `apk/`；最新版走 GitHub Release 的固定地址
-  `releases/latest/download/看得清.apk`，以后发版不用再改 README
+  `releases/latest/download/kanqing.apk`，以后发版不用再改 README
 - versionCode 9 / versionName 2.5
 
 ## 2.4
