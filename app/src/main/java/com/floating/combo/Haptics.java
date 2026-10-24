@@ -3,6 +3,8 @@ package com.floating.combo;
 import android.content.Context;
 import android.media.AudioAttributes;
 import android.os.Build;
+import android.view.HapticFeedbackConstants;
+import android.view.View;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 
@@ -31,6 +33,11 @@ public final class Haptics {
 
     private static Vibrator v = null;
     private static boolean enabled = true;
+    /**
+     * 球那个 View。系统自带的 UI 触感通道（performHapticFeedback）必须挂在
+     * 一个真实存在的 View 上才能走 —— 悬浮球正好就是一个。
+     */
+    private static View view = null;
 
     /** 上一次震动的诊断信息，界面上"试一下"按钮会显示 */
     private static String lastError = "";
@@ -58,6 +65,30 @@ public final class Haptics {
         enabled = on;
     }
 
+    /** 球显示/隐藏时把 View 挂上/摘掉 */
+    public static void attach(View vw) {
+        view = vw;
+    }
+
+    /**
+     * 走系统自己的 UI 触感通道。
+     *
+     * 这是所有正常 App 做按键反馈的方式：由系统的"触感反馈"开关统一管，
+     * 默认是开的。之前只用原始 Vibrator，在小米 + Android 16 上
+     * 调用返回成功、日志也打印了，但系统根本没震 —— 实测就是被这一层拦掉。
+     */
+    private static boolean viaView() {
+        View vw = view;
+        if (vw == null) {
+            return false;
+        }
+        try {
+            return vw.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     /**
      * 这台机器到底能不能震。
      * 注意：这个返回值**只用来显示**，不再用来决定震不震 ——
@@ -83,17 +114,17 @@ public final class Haptics {
 
     /** 一下：取消 / 一般确认 */
     public static void tap() {
-        buzz("tap", new long[]{0, 30}, -1);
+        buzz("tap", new long[]{0, 30}, true);
     }
 
     /** 两下：进入选字态，该你点字了 */
     public static void ready() {
-        buzz("ready", new long[]{0, 40, 90, 40}, -1);
+        buzz("ready", new long[]{0, 40, 90, 40}, true);
     }
 
     /** 一下稍长：开始朗读 */
     public static void speak() {
-        buzz("speak", new long[]{0, 70}, -1);
+        buzz("speak", new long[]{0, 70}, true);
     }
 
     /**
@@ -104,12 +135,13 @@ public final class Haptics {
      * 松手缩放结束，不再震。
      */
     public static void zoom() {
-        buzz("zoom", new long[]{0, 60}, -1);
+        buzz("zoom", new long[]{0, 60}, true);
     }
 
     /** 一记长震：这里没读到字 / 出错 */
     public static void error() {
-        buzz("error", new long[]{0, 200}, -1);
+        // 错误要的是"一记长震"，系统通道给不了这个长度，所以直接走原始接口
+        buzz("error", new long[]{0, 200}, false);
     }
 
     /**
@@ -151,7 +183,16 @@ public final class Haptics {
                 .build();
     }
 
-    private static void buzz(String name, long[] timings, int repeat) {
+    private static void buzz(String name, long[] timings, boolean allowView) {
+        if (allowView && viaView()) {
+            lastError = "";
+            Log.i("haptic", name + "（系统触感通道）");
+            return;
+        }
+        buzzRaw(name, timings);
+    }
+
+    private static void buzzRaw(String name, long[] timings) {
         if (!enabled) {
             Log.i("haptic", name + " 跳过（开关关着）");
             return;
@@ -182,7 +223,7 @@ public final class Haptics {
                             amps[i] = amplitudeControl(vv) ? AMP
                                     : VibrationEffect.DEFAULT_AMPLITUDE;
                         }
-                        fx = VibrationEffect.createWaveform(timings, amps, repeat);
+                        fx = VibrationEffect.createWaveform(timings, amps, -1);
                     }
                     vv.vibrate(fx, attrs());
                     done = true;
@@ -194,7 +235,7 @@ public final class Haptics {
                 // 最兼容的一条路：老 API，不碰振幅。
                 // 刻意不先查 hasVibrator() —— 有些机器谎报"没有马达"，
                 // 一查就把功能关了，而实际上震得动。
-                vv.vibrate(timings, repeat);
+                vv.vibrate(timings, -1);
             }
             lastError = "";
             Log.i("haptic", name + " " + timings[timings.length - 1] + "ms");

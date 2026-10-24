@@ -962,10 +962,10 @@ public class MainActivity extends Activity
                 if (err.length() == 0) {
                     tvHapticDiag.setText(d + "\n"
                             + "震动指令已发出。\n"
-                            + "如果还是没感觉，查这两处：\n"
-                            + "1) 手机是不是静音 / 勿扰模式\n"
-                            + "2) 设置→应用管理→看得清→通知管理→振动\n"
-                            + "   （MIUI / EMUI / ColorOS 这一项默认可能是关的）");
+                            + "如果还是没感觉，查这三处：\n"
+                            + "1) 设置→声音与触感→触感反馈（强度别拉到 0）\n"
+                            + "2) 设置→应用设置→应用管理→看得清→通知管理→振动\n"
+                            + "3) 关掉省电模式（小米在省电时会掐掉震动）");
                     toast("震动指令已发出，结果写在下面");
                 } else {
                     tvHapticDiag.setText(d + "\n失败：" + err + "\n把这行截图发我");

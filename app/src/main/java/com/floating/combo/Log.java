@@ -43,11 +43,18 @@ public class Log {
     private static HandlerThread thread = null;
     private static Handler h = null;
     private static boolean inited = false;
-
+    /** App 自己的版本，日志开头带上，一眼看出测的是哪一版 */
+    private static String appVer = "?";
     /** 内存里也留一份，界面可以直接显示最新若干条 */
     private static final ArrayList<String> recent = new ArrayList<String>();
 
     public static synchronized void init(Context ctx) {
+        try {
+            appVer = ctx.getPackageManager()
+                    .getPackageInfo(ctx.getPackageName(), 0).versionName;
+        } catch (Exception ignored) {
+        }
+
         if (inited) {
             return;
         }
@@ -72,10 +79,11 @@ public class Log {
     }
 
     private static String deviceInfo() {
-        return "SDK=" + android.os.Build.VERSION.SDK_INT
+        return "看得清=" + appVer
+                + " SDK=" + android.os.Build.VERSION.SDK_INT
                 + " 设备=" + android.os.Build.MANUFACTURER
                 + " " + android.os.Build.MODEL
-                + " 版本=" + android.os.Build.VERSION.RELEASE;
+                + " 系统=" + android.os.Build.VERSION.RELEASE;
     }
 
     public static void i(String tag, String msg) {

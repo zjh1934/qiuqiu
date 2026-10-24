@@ -154,6 +154,8 @@ public class BallController implements View.OnTouchListener {
         lastErr = null;
 
         view = new BallView(ctx);
+        // 交给 Haptics：系统 UI 触感通道要挂在一个真实 View 上
+        Haptics.attach(view);
         view.setBallColor(prefs.color());
         view.setBallAlpha(prefs.alpha());
 
@@ -268,6 +270,7 @@ public class BallController implements View.OnTouchListener {
         }
         view = null;
         lp = null;
+        Haptics.attach(null);
     }
 
     public void applyPrefs() {
