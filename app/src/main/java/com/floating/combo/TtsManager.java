@@ -58,6 +58,8 @@ public class TtsManager {
     private static boolean failed = false;
     private static boolean cnOk = false;
     private static String currentPkg = "";
+    /** 系统默认引擎包名。enumerate() 时缓存，供界面显示"跟随系统默认"跟的是谁 */
+    private static String defaultPkg = "";
     private static Context appCtx = null;
     private static OnInitListener listener = null;
     private static SpeechListener speechListener = null;
@@ -118,28 +120,105 @@ public class TtsManager {
         return cnOk;
     }
 
+    /**
+     * 当前实例**实际构造时用的**包名。空串 = 系统默认。
+     *
+     * 必须说清楚它不代表什么：官方没有"查询某个 TextToSpeech 实例
+     * 最终绑定到了哪个包"的公开 API（3.3 复查确认，官方构造器文档也
+     * 明说"不保证指定引擎会被加载"）。这里返回的是我们构造时传进去的值。
+     * 若那个引擎没装 / 被禁用，系统会**静默回退**到默认引擎，
+     * 而这个值不会跟着变 —— 它能证明"我们请求了谁"，
+     * 不能证明"最终生效的是谁"。
+     */
     public static String getCurrentPkg() {
         return currentPkg;
     }
 
     /**
-     * 枚举引擎。两条路都走，结果合并：
-     *   ① PackageManager 查 TTS_SERVICE（需要 manifest 里声明 <queries>）
-     *   ② 建实例问 getEngines()（部分引擎要注册后才出现）
+     * 枚举引擎。
+     *
+     * 两条路都走，但**顺序有讲究**（3.3 改过）：
+     *   ① 建实例问 getEngines() —— 官方定义的"已安装引擎"列表，作为主来源
+     *   ② PackageManager 查 TTS_SERVICE —— 只用来补齐 ① 漏掉的
+     *
+     * 原来反过来（包查询在前、getEngines() 兜底）。外部核查指出
+     * getEngines() 才是官方定义的来源，包查询在 Android 11+ 还受包可见性影响，
+     * 放前面会让"列表第一项是谁"变得不可预测 ——
+     * 而列表第一项恰好就是"没存过引擎时默认选中的那一项"，
+     * 顺序不稳会直接导致界面显示和实际用的引擎对不上。
+     *
+     * 注意：这个列表**不含"跟随系统默认"** 这一项，那是界面层加的。
      */
     public static List<Engine> enumerate(Context ctx) {
         List<Engine> out = new ArrayList<Engine>();
+
+        // ① 主来源：实例查询
+        TextToSpeech probe = null;
         try {
-            Intent intent = new Intent("android.intent.action.TTS_SERVICE");
+            // listener 不能传 null！
+            // 官方标注这个参数是**非空**：framework 初始化完成时会回调它，
+            // 传 null 必然 NPE（在回调线程上抛，还会把这次枚举整条路径废掉）。
+            // 原来这里就传的 null，异常被外层 catch 吞掉，
+            // 表现是"列表里永远只有包查询查到的那几个"。
+            probe = new TextToSpeech(ctx.getApplicationContext(),
+                    new TextToSpeech.OnInitListener() {
+                        @Override
+                        public void onInit(int status) {
+                            // 空实现：这里只要一个合法的 listener 占位，
+                            // 枚举用的是下面的同步 getEngines()/getDefaultEngine()
+                        }
+                    });
+            List<TextToSpeech.EngineInfo> es = probe.getEngines();
+            Log.i("tts", "getEngines() 命中 " + (es == null ? 0 : es.size()) + " 个");
+            if (es != null) {
+                for (TextToSpeech.EngineInfo e : es) {
+                    if (e == null || e.name == null || containsPkg(out, e.name)) {
+                        continue;
+                    }
+                    String label = e.label;
+                    if (label == null || label.isEmpty()) {
+                        // label 官方不保证非空。空了就用包名 ——
+                        // 比显示"系统 TTS"这种猜出来的名字可解释得多
+                        label = e.name;
+                    }
+                    out.add(new Engine(label, e.name));
+                }
+            }
+            // 系统默认引擎的包名，趁实例还活着取回来缓存。
+            //
+            // 为什么必须在实例上取：getDefaultEngine() 是**实例方法**，不是静态的。
+            // 写成 TextToSpeech.getDefaultEngine() 会直接编译失败
+            // （non-static method cannot be referenced from a static context）。
+            // 我 3.3 第一版就写错了，是复查时抓出来的。
+            try {
+                String d = probe.getDefaultEngine();
+                // 无引擎可用时官方未定义返回值，参考实现是空串 —— null 和空串都要挡
+                defaultPkg = (d == null) ? "" : d;
+            } catch (Exception ignored) {
+                // 取不到就留着上一次的值，UI 层有兜底文案
+            }
+        } catch (Exception ignored) {
+        } finally {
+            // 原来 shutdown 写在 try 里，getEngines() 一抛异常就永远绑着这个实例
+            if (probe != null) {
+                try {
+                    probe.shutdown();
+                } catch (Exception ignored) {
+                }
+            }
+        }
+        Log.i("tts", "系统默认引擎 = " + (defaultPkg.length() == 0 ? "(未知)" : defaultPkg));
+
+        // ② 补齐：包查询（需要 manifest 里声明 <queries>）
+        try {
+            Intent intent = new Intent(TextToSpeech.Engine.INTENT_ACTION_TTS_SERVICE);
             PackageManager pm = ctx.getPackageManager();
             int flag = 0;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 flag = PackageManager.MATCH_ALL;
             }
             List<ResolveInfo> list = pm.queryIntentServices(intent, flag);
-        int n = (list == null) ? 0 : list.size();
-        Log.i("tts", "包查询 TTS_SERVICE 命中 " + n + " 个"
-                + (n == 0 ? " ← 若只有 0 个，多半是 <queries> 没生效或没装第三方引擎" : ""));
+            int before = out.size();
             if (list != null) {
                 for (ResolveInfo ri : list) {
                     if (ri.serviceInfo == null) {
@@ -158,38 +237,26 @@ public class TtsManager {
                     out.add(new Engine(label, pkg));
                 }
             }
+            Log.i("tts", "包查询 TTS_SERVICE 命中 "
+                    + (list == null ? 0 : list.size()) + " 个，补齐后共 "
+                    + out.size() + " 个（新增 " + (out.size() - before) + "）");
         } catch (Exception ignored) {
-        }
-
-        // 兜底：实例查询
-        TextToSpeech probe = null;
-        try {
-            probe = new TextToSpeech(ctx.getApplicationContext(), null);
-            List<TextToSpeech.EngineInfo> es = probe.getEngines();
-            Log.i("tts", "getEngines() 命中 " + (es == null ? 0 : es.size()) + " 个");
-            if (es != null) {
-                for (TextToSpeech.EngineInfo e : es) {
-                    if (e == null || e.name == null || containsPkg(out, e.name)) {
-                        continue;
-                    }
-                    String label = e.label;
-                    if (label == null || label.isEmpty()) {
-                        label = e.name;
-                    }
-                    out.add(new Engine(label, e.name));
-                }
-            }
-        } catch (Exception ignored) {
-        } finally {
-            // 原来 shutdown 写在 try 里，getEngines() 一抛异常就永远绑着这个实例
-            if (probe != null) {
-                try {
-                    probe.shutdown();
-                } catch (Exception ignored) {
-                }
-            }
         }
         return out;
+    }
+
+    /**
+     * 系统默认引擎的包名（API 8 就有）。
+     *
+     * 用来告诉用户"跟随系统默认"到底跟的是谁 ——
+     * 不然那一项是个空名字，用户根本不知道自己在用什么。
+     *
+     * 返回的是**上一次 enumerate() 缓存下来的值**，不是当场算的：
+     * 因为它得在 TextToSpeech 实例上取，而 UI 线程上现建一个实例太贵。
+     * 没枚举过就是空串，界面层自己兜底。
+     */
+    public static String defaultEnginePkg() {
+        return defaultPkg == null ? "" : defaultPkg;
     }
 
     private static boolean containsPkg(List<Engine> list, String pkg) {

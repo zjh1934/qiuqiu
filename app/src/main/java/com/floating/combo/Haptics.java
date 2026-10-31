@@ -25,11 +25,23 @@ import android.os.Vibrator;
  *   - 凡是失败都写进日志（搜 haptic），并且有"试一下"按钮可当场验证
  *
  * 节奏设计对齐 iOS 缩放控制器：按住 → 缩放生效那一下震一次，松手不震。
+ *
+ * ── 3.2 起的三档分配 ──
+ *   长按放大  强震（长 + 满振幅）
+ *   轻点      普通一下（短 + 弱振幅）
+ *   取词全程  完全不震
+ *
+ * 为什么"强"不能只靠换常量：Android 官方明确说 HapticFeedbackConstants
+ * 表达的是**事件类型**（长按 / 键盘敲击 / 时钟刻度），不是强度档位，
+ * 实际效果由设备实现决定，官方不保证 LONG_PRESS 强于 KEYBOARD_TAP。
+ * 所以强弱只能靠【回退通道上的时长 + 振幅】拉开，常量只用于系统通道那一路。
  */
 public final class Haptics {
 
     /** 最大振幅。只有设备明确支持振幅控制时才用 */
     private static final int AMP = 255;
+    /** 轻档振幅。跟满振幅拉开明显差距，别做成"只是短一点" */
+    private static final int AMP_LIGHT = 110;
 
     private static Vibrator v = null;
     private static boolean enabled = true;
@@ -76,14 +88,16 @@ public final class Haptics {
      * 这是所有正常 App 做按键反馈的方式：由系统的"触感反馈"开关统一管，
      * 默认是开的。之前只用原始 Vibrator，在小米 + Android 16 上
      * 调用返回成功、日志也打印了，但系统根本没震 —— 实测就是被这一层拦掉。
+     *
+     * @param constant 事件类型常量。注意它只表达"什么事件"，不保证强度。
      */
-    private static boolean viaView() {
+    private static boolean viaView(int constant) {
         View vw = view;
         if (vw == null) {
             return false;
         }
         try {
-            return vw.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+            return vw.performHapticFeedback(constant);
         } catch (Throwable t) {
             return false;
         }
@@ -112,37 +126,43 @@ public final class Haptics {
         return lastError;
     }
 
-    /** 一下：取消 / 一般确认 */
+    /** 轻点：一下短震、弱振幅。取消 / 一般确认 / 界面按钮 */
     public static void tap() {
-        buzz("tap", new long[]{0, 30}, true);
-    }
-
-    /** 两下：进入选字态，该你点字了 */
-    public static void ready() {
-        buzz("ready", new long[]{0, 40, 90, 40}, true);
-    }
-
-    /** 一下稍长：开始朗读 */
-    public static void speak() {
-        buzz("speak", new long[]{0, 70}, true);
+        buzz("tap", HapticFeedbackConstants.KEYBOARD_TAP,
+                new long[]{0, 25}, AMP_LIGHT);
     }
 
     /**
-     * 缩放启动的那一下 —— 整个 App 里最重要的一次触感。
+     * 长按放大：强震 —— 整个 App 里最重要的一次触感。
      *
      * 对齐 iOS 的缩放控制器：按住，缩放生效的那一瞬间震一下，
      * 用户"感觉到震动"就知道画面已经放大了，接下来拖手指就行；
      * 松手缩放结束，不再震。
+     *
+     * 强在哪：系统通道给不了强度保证，所以靠回退通道上的
+     * 80ms + 满振幅（对比轻点的 25ms + 弱振幅）拉开体感差距。
      */
     public static void zoom() {
-        buzz("zoom", new long[]{0, 60}, true);
+        buzz("zoom", HapticFeedbackConstants.LONG_PRESS,
+                new long[]{0, 80}, AMP);
     }
 
     /** 一记长震：这里没读到字 / 出错 */
     public static void error() {
         // 错误要的是"一记长震"，系统通道给不了这个长度，所以直接走原始接口
-        buzz("error", new long[]{0, 200}, false);
+        buzzRaw("error", new long[]{0, 200}, AMP);
     }
+
+    /*
+     * ── 取词全程不震 ──
+     * 3.2 起，"点球进选取态"和"开始朗读"这两处都不再震动。
+     * 原来分别是 ready()（两下短震）和 speak()（一下稍长），已删除。
+     *
+     * 代价要说清楚：低视力用户本来靠震动确认"进入选取态了 / 开始读了"，
+     * 现在只能靠球的颜色（选取态绿、朗读中橙）。
+     * 但"读不到字"那记长震（error）保留 —— 那是失败报警不是状态提示，
+     * 去掉的话点了个空白区域会完全不知道为什么没反应。
+     */
 
     /**
      * 不管开关是开是关，强制震一下 —— 界面上"试一下"按钮用。
@@ -183,16 +203,17 @@ public final class Haptics {
                 .build();
     }
 
-    private static void buzz(String name, long[] timings, boolean allowView) {
-        if (allowView && viaView()) {
+    /** 先试系统触感通道，没走成才退回原始 Vibrator（那时才用得上振幅） */
+    private static void buzz(String name, int viewConstant, long[] timings, int amp) {
+        if (viaView(viewConstant)) {
             lastError = "";
             Log.i("haptic", name + "（系统触感通道）");
             return;
         }
-        buzzRaw(name, timings);
+        buzzRaw(name, timings, amp);
     }
 
-    private static void buzzRaw(String name, long[] timings) {
+    private static void buzzRaw(String name, long[] timings, int amp) {
         if (!enabled) {
             Log.i("haptic", name + " 跳过（开关关着）");
             return;
@@ -214,13 +235,13 @@ public final class Haptics {
                         // 首段 0 时长在部分 ROM 上会整个不生效
                         fx = VibrationEffect.createOneShot(
                                 timings[timings.length - 1],
-                                amplitudeControl(vv) ? AMP : VibrationEffect.DEFAULT_AMPLITUDE);
+                                amplitudeControl(vv) ? amp : VibrationEffect.DEFAULT_AMPLITUDE);
                     } else {
                         int n = timings.length;
                         int[] amps = new int[n];
                         amps[0] = 0;
                         for (int i = 1; i < n; i++) {
-                            amps[i] = amplitudeControl(vv) ? AMP
+                            amps[i] = amplitudeControl(vv) ? amp
                                     : VibrationEffect.DEFAULT_AMPLITUDE;
                         }
                         fx = VibrationEffect.createWaveform(timings, amps, -1);

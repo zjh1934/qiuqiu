@@ -145,9 +145,20 @@ public class BallController implements View.OnTouchListener {
     private String lastErr = null;
 
     public void show() {
-        if (view != null) {
+        if (view != null && view.getParent() != null) {
+            // 已经稳稳挂在窗口上，只刷一下外观
+            lastErr = null;
             applyPrefs();
             return;
+        }
+        if (view != null) {
+            // view 还在，但已经不在窗口上了（被系统摘掉 / 上次 removeView 没清干净）。
+            // 老代码在这里直接 return，结果球永远回不来 ——
+            // 用户看到的就是"开关关了再开，怎么点都没反应"。必须重建。
+            Log.w("ball", "view 已脱离窗口，丢弃后重建");
+            view = null;
+            lp = null;
+            Haptics.attach(null);
         }
         measure();
         int size = dp(prefs.sizeDp());

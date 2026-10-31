@@ -381,7 +381,7 @@ public class ComboService extends AccessibilityService
             ball.setState(BallView.ST_PICKING);
         }
         addOverlay();
-        Haptics.ready();
+        // 3.2：进选取态不震。球变绿就是信号（见 Haptics 里"取词全程不震"的说明）
         h.removeCallbacks(pickTimeout);
         h.postDelayed(pickTimeout, 8000);
     }
@@ -435,6 +435,20 @@ public class ComboService extends AccessibilityService
         float rate = prefs.rate();
         if (rate < 0.1f) {
             rate = 1f;
+        }
+        // 3.3 新增：算超时用的 rate 夹到 2.0 以内。
+        //
+        // 语速滑杆已经能拉到 3.0，但外部核查确认 —— framework 不做上限 clamp，
+        // setSpeechRate(3.0) 返回 SUCCESS，而**引擎实际行为未定义**：
+        // 可能真的 3 倍速，也可能内部 clamp 回 2.0 甚至 1.0，
+        // 我们从任何回调都感知不到。
+        //
+        // 若按 3.0 算：超时 = 字数 × 300 / 3.0 = 100ms/字。
+        // 可引擎要是实际按 1.0 在念（200~250ms/字），
+        // 长文读到 1/3 就被判定超时切断 —— 用户听到的是"念一半停了"。
+        // 宁可超时宽松一点，不可误杀。
+        if (rate > 2.0f) {
+            rate = 2.0f;
         }
         // 300ms/字：中文正常语速 4~5 字/秒，给足余量；
         // 上限 30 分钟只是防"永远不回调"，真正的长文靠 onChunk 每段续命
@@ -581,7 +595,7 @@ public class ComboService extends AccessibilityService
         if (ball != null) {
             ball.setState(BallView.ST_SPEAKING);
         }
-        Haptics.speak();
+        // 3.2：开始朗读不震。球变橙 + 出声就是信号
         // 引擎万一不回调，也要能从"两竖"里退出来
         h.removeCallbacks(speakWatchdog);
         h.postDelayed(speakWatchdog, guardMs(text.length()));

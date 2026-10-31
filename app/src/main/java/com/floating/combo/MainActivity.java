@@ -69,6 +69,8 @@ public class MainActivity extends Activity
     // 朗读页
     private Spinner spEngine, spVoice;
     private TextView tvRate, tvPitch, tvEngineInfo;
+    /** 语速超过 2.0 时的风险提示行。只在越界时显示 */
+    private TextView tvRateHint;
     private boolean enginesLoaded = false;
     private List<TtsManager.Engine> engines = new ArrayList<TtsManager.Engine>();
     private List<TtsManager.Voice> voices = new ArrayList<TtsManager.Voice>();
@@ -81,6 +83,8 @@ public class MainActivity extends Activity
 
     // 球页
     private TextView tvSize, tvAlpha, tvIdle;
+    /** "闲置时"滑杆下的说明行。只在 100%（=不变淡）时出现 */
+    private TextView tvIdleHint;
     private Button btnSnap, btnComp, btnHaptic;
     private TextView tvHapticDiag;
     private int colorIndex = 0;
@@ -156,6 +160,17 @@ public class MainActivity extends Activity
     protected void onResume() {
         super.onResume();
         refreshStatus();
+        // 从无障碍设置页回来时，系统重绑服务是异步的：
+        // 立刻查很可能还是"服务未运行"，但那只是还没绑上，不是没救。
+        // 再刷一次，免得用户看着"未运行"以为白折腾一趟。
+        if (swBall != null) {
+            swBall.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    refreshStatus();
+                }
+            }, 1200);
+        }
         if (!enginesLoaded) {
             // 每次 onResume 都重建会 new 一个 TTS 探针并同步 IPC，回到前台会卡一下。
             // 引擎列表只有装了/卸了语音引擎才会变，进页面时取一次就够。
@@ -210,25 +225,40 @@ public class MainActivity extends Activity
                 if (syncSwitch) {
                     return;     // 界面在同步状态，不是用户点的
                 }
-                if (!accOn()) {
-                    toast("先去开启无障碍服务，球才有地方挂");
-                    syncSwitch = true;
-                    swBall.setChecked(false);
-                    syncSwitch = false;
-                    openAccSettings();
+                if (!checked) {
+                    // 关：纯本地的事。服务在就收球，服务被杀了也无所谓
+                    prefs.setBallOn(false);
+                    ComboService.refresh();
+                    postRefresh(b, 250);
                     return;
                 }
-                prefs.setBallOn(checked);
+                // 开：先把"想开"记下来。
+                // 这样无障碍一旦打开，服务 onServiceConnected 会自己把球挂上，
+                // 不需要用户回来再点一次开关。
+                prefs.setBallOn(true);
+                if (!accOn()) {
+                    toast("球要挂在无障碍服务上，先去把它打开");
+                    openAccSettings();
+                    postRefresh(b, 250);
+                    return;
+                }
+                if (!ComboService.isRunning()) {
+                    // 系统设置里开着，但服务进程没连上（被省电策略杀了 / 崩过）。
+                    // 普通 App 无权自己重绑无障碍服务，只能请用户在设置里关一次再开。
+                    toast("服务被系统停掉了，去无障碍设置里关一次再开");
+                    openAccSettings();
+                    postRefresh(b, 250);
+                    return;
+                }
                 ComboService.refresh();
-                // 服务把球挂到窗口上要一点时间，稍后再按事实刷一次
-                b.postDelayed(new Runnable() {
-                    @Override
-                    public void run() {
-                        refreshStatus();
-                    }
-                }, 350);
+                postRefresh(b, 350);
             }
         });
+
+        // 开关【永远可点】，不能 setEnabled(false)。
+        // 之前无障碍没开时把开关禁用，结果上面 onCheckedChanged 里
+        // "点了就去设置页"那段代码永远执行不到 ——
+        // 用户看到的就是"怎么点都没反应"。这次的 bug 正根就在这。
         row.addView(swBall);
         c.addView(row);
 
@@ -271,38 +301,61 @@ public class MainActivity extends Activity
         }
     }
 
+    /** 延后按事实再刷一次状态：挂窗口、重绑服务都不是同步完成的 */
+    private void postRefresh(View v, int ms) {
+        v.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                refreshStatus();
+            }
+        }, ms);
+    }
+
     private void refreshStatus() {
         boolean acc = accOn();
         boolean running = ComboService.isRunning();
-        boolean shown = acc && running && ComboService.ballShown();
+        boolean shown = ComboService.ballShown();
         Log.i("ui", "状态刷新 设置=" + prefs.ballOn() + " 无障碍=" + acc
                 + " 服务=" + running + " 球=" + shown);
 
-        // 开关只认事实：球真的挂在窗口上才算开。
-        // 原来按设置项显示，第一次装好、无障碍还没开就写着"关闭悬浮球"。
-        // 开关显示"想不想开"，实际开没开由下面状态卡说。
-        // 不能按事实显示：一旦球因为别的原因没挂上（服务没连、窗口加不上），
-        // 开关会永远点不动，用户连关掉重试都做不到。
+        // 开关显示"想不想开"（prefs），实际开没开由下面状态卡说。
+        //
+        // 为什么不按事实显示：球因为别的原因没挂上时（服务没连、窗口加不上），
+        // 按事实就会显示"关"，用户点一下只是把 prefs 又设成 true，
+        // 球还是出不来 —— 来回点都无效，看着就像开关坏了。
+        //
+        // 为什么又不能 setEnabled(false)：禁用了就再也收不到点击，
+        // 上面"点了去设置页"的引导永远触发不到。这次的 bug 就出在这。
         syncSwitch = true;
-        swBall.setEnabled(acc);
         swBall.setChecked(acc && prefs.ballOn());
         syncSwitch = false;
 
-        // 无障碍没开时，开关点不了，给一个直达设置的按钮
-        bAcc.setVisibility(acc ? View.GONE : View.VISIBLE);
+        // 三态，按钮文案跟着变：没授权 / 已授权但服务没连上 / 都好
+        if (!acc) {
+            bAcc.setVisibility(View.VISIBLE);
+            bAcc.setText("去开启无障碍服务");
+        } else if (!running) {
+            bAcc.setVisibility(View.VISIBLE);
+            bAcc.setText("服务被停了 · 去无障碍里关一次再开");
+        } else {
+            bAcc.setVisibility(View.GONE);
+        }
 
-        // 只留两行：无障碍状态 + 球状态。原来还重复了一遍"点球朗读/按住放大"，
-        // 上面开关卡里已经写过，白占一行高度
         StringBuilder sb = new StringBuilder();
         sb.append(acc ? "● 无障碍已开启" : "○ 无障碍未开启");
         sb.append("　");
         if (!acc) {
             sb.append("○ 球未显示");
+        } else if (!running) {
+            // 把"系统设置里开着、但服务进程没了"单独说清楚。
+            // 这两件事不是一回事：设置项只代表用户授权过，不代表服务正在跑。
+            sb.append("○ 服务未运行");
+            sb.append("\n○ 省电策略可能把它停了，去无障碍里关一次再开");
         } else {
             sb.append(ComboService.stateText());
-        }
-        if (acc && running && prefs.ballOn() && !shown) {
-            sb.append("\n○ 球没挂上窗口，关一次再开可重试");
+            if (prefs.ballOn() && !shown) {
+                sb.append("\n○ 球没挂上窗口，再点一次开关可重试");
+            }
         }
         tvStatus.setText(sb.toString());
         tvStatus.setTextColor(Theme.TEXT_2);
@@ -549,20 +602,29 @@ public class MainActivity extends Activity
         c2.addView(section("语速与音调"), lp(0, 0, 0, dp(14)));
 
         tvRate = new TextView(this);
-        c2.addView(sliderRow("语速", tvRate, 50, 200, (int) (prefs.rate() * 100),
+        // 3.3：上限 2.0 → 3.0（50~300）。下限保持 0.5
+        c2.addView(sliderRow("语速", tvRate, 50, 300, (int) (prefs.rate() * 100),
                 new OnVal() {
                     @Override
                     public void on(int v) {
                         prefs.setRate(v / 100f);
+                        updateRateHint();
                     }
                 }, "重置", new Runnable() {
                     @Override
                     public void run() {
-                        prefs.setRate(1.0f);
+                        prefs.setRate(2.0f);
                         rebuild();
-                        toast("语速已恢复 1.00");
+                        toast("语速已恢复 2.00");
                     }
                 }), lp(0, 0, 0, dp(16)));
+        // 超过 2.0 的区间是"引擎不一定买账"的区间，当场说清楚，
+        // 别让用户拉到 3.0 发现没变化，以为是 App 坏了
+        tvRateHint = new TextView(this);
+        tvRateHint.setTextSize(12);
+        tvRateHint.setTextColor(Theme.TEXT_2);
+        updateRateHint();
+        c2.addView(tvRateHint, lp(0, dp(4), 0, dp(16)));
 
         tvPitch = new TextView(this);
         c2.addView(sliderRow("音调", tvPitch, 50, 200, (int) (prefs.pitch() * 100),
@@ -626,20 +688,88 @@ public class MainActivity extends Activity
         return page;
     }
 
+    /**
+     * 闲置不透明度说明行。
+     *
+     * 3.4 把默认值提到了 100%，等于"闲置不变淡"。
+     * 这个默认值跟 2.x 时代的行为相反（原来是 30%，闲置就淡下去），
+     * 不写一行的话，老用户升级后会以为淡出功能坏了 ——
+     * 实际上拉到 100% 以下就恢复了。
+     */
+    private void updateIdleHint() {
+        if (tvIdleHint == null) {
+            return;
+        }
+        if (prefs.idleAlpha() >= 1.0f) {
+            tvIdleHint.setVisibility(View.VISIBLE);
+            tvIdleHint.setText("现在是 100%，闲置也不会变淡。往下拉就会淡");
+        } else {
+            tvIdleHint.setVisibility(View.GONE);
+        }
+    }
+
+    /**
+     * 语速提示行。
+     *
+     * 2.0 以上为什么要单独提示：外部核查确认 framework 层不做上限 clamp，
+     * setSpeechRate(3.0) 会返回 SUCCESS，但**引擎实际行为未定义** ——
+     * 可能真的 3 倍速、可能内部 clamp 回 2.0、可能失真吞字，
+     * 而且应用层从任何回调都感知不到到底是哪种。
+     * 不提示的话，用户拉到 3.0 发现"没变化"，第一反应是 App 坏了。
+     */
+    private void updateRateHint() {
+        if (tvRateHint == null) {
+            return;
+        }
+        float r = prefs.rate();
+        if (r > 2.0f) {
+            tvRateHint.setVisibility(View.VISIBLE);
+            tvRateHint.setText("超过 2.0 后，部分引擎会自己限制上限或直接失真，"
+                    + "听着不对就往回调一点");
+        } else {
+            tvRateHint.setVisibility(View.GONE);
+        }
+    }
+
     private void reloadEngines() {
-        engines = TtsManager.enumerate(this);
+        List<TtsManager.Engine> real = TtsManager.enumerate(this);
+
+        // 第 0 项固定是"跟随系统默认"，pkg 用空串表示（跟 getSavedEngine 的约定一致）。
+        //
+        // 为什么必须有这一项：原来列表里全是实测到的引擎，
+        // 而"没存过 / 存的是空串"（= 系统默认）时 sel 落在第 0 项 ——
+        // 于是界面显示的是列表第一台引擎的名字，实际用的却是系统默认的那台。
+        // 两者常常不是同一台，用户看到的就是"我明明在用别的，它却显示系统 TTS"。
+        // 更糟的是：这时点第一项，pkg 恰好等于 shownEngine，回调直接 return，
+        // 点了完全没反应 —— 像坏了一样。
+        //
+        // 加上这一项后：空串有了一个能显式选中的入口，
+        // 默认落在它上面，显示和实际操作也就对上了。
+        engines = new ArrayList<TtsManager.Engine>();
+        String def = TtsManager.defaultEnginePkg();
+        String defLabel = "";
+        for (int i = 0; i < real.size(); i++) {
+            TtsManager.Engine e = real.get(i);
+            if (e.pkg != null && e.pkg.equals(def)) {
+                defLabel = e.name;
+                break;
+            }
+        }
+        engines.add(new TtsManager.Engine(
+                defLabel.length() > 0 ? "跟随系统默认（" + defLabel + "）" : "跟随系统默认",
+                ""));
+        engines.addAll(real);
+
         List<String> names = new ArrayList<String>();
         int sel = 0;
         String saved = TtsManager.getSavedEngine(this);
         for (int i = 0; i < engines.size(); i++) {
             TtsManager.Engine e = engines.get(i);
             names.add(e.name);
+            // saved 为空串 = 系统默认 = 第 0 项，正好是 sel 的初值
             if (saved != null && saved.length() > 0 && saved.equals(e.pkg)) {
                 sel = i;
             }
-        }
-        if (names.isEmpty()) {
-            names.add("（没检测到引擎）");
         }
         ArrayAdapter<String> ad = new ArrayAdapter<String>(this,
                 android.R.layout.simple_spinner_dropdown_item, names);
@@ -648,8 +778,7 @@ public class MainActivity extends Activity
         // 界面上现在代表哪个引擎。setAdapter/setSelection 会触发一次回调，
         // 那不是"用户换了引擎" —— 不区分的话，每次打开 App 都会把引擎
         // 切成列表第一项并重连一次，正在进行的朗读会被当场打断。
-        shownEngine = (engines.isEmpty())
-                ? null : engines.get(Math.min(sel, engines.size() - 1)).pkg;
+        shownEngine = engines.get(Math.min(sel, engines.size() - 1)).pkg;
         spEngine.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int pos, long id) {
@@ -666,7 +795,7 @@ public class MainActivity extends Activity
                 }
                 TtsManager.saveEngine(MainActivity.this, pkg);
                 TtsManager.rebind(getApplicationContext());
-                toast("正在切换引擎…");
+                toast(pkg.length() == 0 ? "正在切回系统默认引擎…" : "正在切换引擎…");
             }
 
             @Override
@@ -736,6 +865,23 @@ public class MainActivity extends Activity
                     if (voices.isEmpty()) {
                         reloadVoices();
                     }
+                }
+                // 把"我们请求的是哪台"直接写出来。
+                //
+                // 为什么必须写：官方没有"查询实例最终绑定到哪个包"的公开 API，
+                // 而且外部核查确认 —— 请求的引擎若未安装/被禁用，系统会
+                // **静默回退**到默认引擎，我们这边完全收不到通知。
+                // 用户怀疑"是不是虚空引用"时，这行字是唯一能自己核对的依据：
+                // 显示的包名跟下拉框选的对得上，就说明请求确实发出去了。
+                String req = TtsManager.getCurrentPkg();
+                sb.append("\n实际请求：");
+                if (req.length() == 0) {
+                    sb.append("系统默认（");
+                    String d = TtsManager.defaultEnginePkg();
+                    sb.append(d.length() == 0 ? "未知" : d);
+                    sb.append("）");
+                } else {
+                    sb.append(req);
                 }
                 tvEngineInfo.setText(sb.toString());
             }
@@ -860,8 +1006,16 @@ public class MainActivity extends Activity
                     public void on(int v) {
                         prefs.setIdleAlpha(v / 100f);
                         ComboService.refresh();   // 不刷的话屏幕上的球不会立刻变
+                        updateIdleHint();
                     }
                 }));
+        // 3.4 把闲置默认值提到了 100%，等于"默认不变淡"。
+        // 不说的话，老用户升级后会以为闲置淡出这个功能坏了
+        tvIdleHint = new TextView(this);
+        tvIdleHint.setTextSize(12);
+        tvIdleHint.setTextColor(Theme.TEXT_2);
+        updateIdleHint();
+        c1.addView(tvIdleHint, lp(0, dp(4), 0, 0));
         page.addView(c1, lp(0, 0, 0, dp(12)));
 
         // 卡 2：颜色

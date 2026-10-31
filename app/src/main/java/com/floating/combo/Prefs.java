@@ -33,6 +33,10 @@ public class Prefs {
     private static final String K_BALL_X = "ball_x";
     private static final String K_BALL_Y = "ball_y";
     private static final String K_RATE = "rate";
+    /** 3.3 语速默认值迁移标记。只写一次，之后用户改回 1.0 也不再动 */
+    private static final String K_RATE_MIG_33 = "rate_mig_33";
+    /** 3.4 不透明度默认值迁移标记。两个 alpha 共用一个标记，要么都迁要么都不迁 */
+    private static final String K_ALPHA_MIG_34 = "alpha_mig_34";
     private static final String K_PITCH = "pitch";
     private static final String K_HAPTIC = "haptic";
 
@@ -40,6 +44,73 @@ public class Prefs {
 
     public Prefs(Context c) {
         sp = c.getSharedPreferences(P, Context.MODE_PRIVATE);
+        migrateRate33();
+        migrateAlpha34();
+    }
+
+    /**
+     * 3.3：语速默认值从 1.0 提到 2.0。
+     *
+     * 光改 rate() 的默认值对老用户没用 —— 他们 sp 里存着 1.0，
+     * 升级完还是 1.0，等于没改。所以这里做一次迁移。
+     *
+     * 迁谁：**只迁还停在旧默认值 1.0 的**。主动调过的人（1.5、0.8…）一律不动。
+     *
+     * 代价说清楚：恰好把语速主动调到 1.0 的老用户会被一并迁到 2.0。
+     * 无法区分"没调过所以是 1.0"和"调过、正好调成 1.0" ——
+     * sp 里只有一个 float，没有"是否调过"的标记。
+     * 两害相权：让所有老用户都停在 1.0（等于没升级）更糟，
+     * 而且被迁的人手动调回 1.0 即可，标记已写，不会二次迁移。
+     */
+    private void migrateRate33() {
+        if (sp.getBoolean(K_RATE_MIG_33, false)) {
+            return;
+        }
+        sp.edit().putBoolean(K_RATE_MIG_33, true).apply();
+        if (!sp.contains(K_RATE)) {
+            return;     // 从没存过 = 新装，直接走 rate() 的新默认 2.0
+        }
+        float v = sp.getFloat(K_RATE, 1.0f);
+        if (v == 1.0f) {
+            sp.edit().putFloat(K_RATE, 2.0f).apply();
+        }
+    }
+
+    /**
+     * 3.4：不透明度默认值 92% / 闲置 30% → 都是 100%。
+     *
+     * 跟语速同一个问题：光改默认值对老用户没用，sp 里存着旧值。
+     * 同样是**只迁还停在旧默认值的**（92% / 30%），调过的人不动。
+     *
+     * 两个 alpha 共用一个标记：**要么都迁、要么都不迁**。
+     * 不能拆开 —— 只迁一个会配出"闲置比正常还实"这种从没存在过的组合，
+     * 那是我们自己造出来的怪状态，不是用户见过的任何一种。
+     *
+     * 代价同语速那条：恰好主动调到 92% / 30% 的人会被一起迁走。
+     */
+    private void migrateAlpha34() {
+        if (sp.getBoolean(K_ALPHA_MIG_34, false)) {
+            return;
+        }
+        sp.edit().putBoolean(K_ALPHA_MIG_34, true).apply();
+        boolean hasA = sp.contains(K_ALPHA);
+        boolean hasI = sp.contains(K_IDLE_ALPHA);
+        if (!hasA && !hasI) {
+            return;     // 从没存过 = 新装，走新默认 100%
+        }
+        boolean onDefaultA = !hasA || sp.getFloat(K_ALPHA, 0.92f) == 0.92f;
+        boolean onDefaultI = !hasI || sp.getFloat(K_IDLE_ALPHA, 0.30f) == 0.30f;
+        if (!onDefaultA || !onDefaultI) {
+            return;     // 有一项被调过 → 尊重用户的配置，两个都不动
+        }
+        SharedPreferences.Editor ed = sp.edit();
+        if (hasA) {
+            ed.putFloat(K_ALPHA, 1.0f);
+        }
+        if (hasI) {
+            ed.putFloat(K_IDLE_ALPHA, 1.0f);
+        }
+        ed.apply();
     }
 
     public boolean ballOn() {
@@ -74,16 +145,27 @@ public class Prefs {
         return COLORS[colorIndex()];
     }
 
+    /**
+     * 球的正常不透明度。3.4 起默认 100%（原来是 92%）。
+     * 滑杆范围仍是 20% ~ 100%，调过的人不受影响（见 migrateAlpha34）。
+     */
     public float alpha() {
-        return sp.getFloat(K_ALPHA, 0.92f);
+        return sp.getFloat(K_ALPHA, 1.0f);
     }
 
     public void setAlpha(float v) {
         sp.edit().putFloat(K_ALPHA, v).apply();
     }
 
+    /**
+     * 闲置 2.5 秒后变多淡。3.4 起默认 100%（原来是 30%）。
+     *
+     * 默认 100% 意味着**闲置淡出默认不再有视觉变化** —— 球一直保持全实。
+     * 这是 3.4 有意的取舍：先保证"永远看得清"，想要变淡的人自己往下拉。
+     * 淡出的代码逻辑没删，拉到 100% 以下立刻生效。
+     */
     public float idleAlpha() {
-        return sp.getFloat(K_IDLE_ALPHA, 0.30f);
+        return sp.getFloat(K_IDLE_ALPHA, 1.0f);
     }
 
     public void setIdleAlpha(float v) {
@@ -168,9 +250,23 @@ public class Prefs {
         sp.edit().putInt(K_BALL_X, x).putInt(K_BALL_Y, y).apply();
     }
 
-    /** 语速 0.5 ~ 2.0，1.0 = 正常 */
+    /**
+     * 语速 0.5 ~ 3.0，3.3 起默认 2.0、上限 3.0（原来是 1.0 / 2.0）。
+     *
+     * 为什么仍然要 clamp：外部核查确认 framework 层只校验 >0，
+     * 不做任何上限 clamp，setSpeechRate(3.0) 会返回 SUCCESS，
+     * 但**引擎实际行为未定义** —— 可能正常、可能内部 clamp、可能失真吞字，
+     * 而应用层无法从任何回调感知。所以至少保证传进来的数在我们自己的区间内。
+     */
     public float rate() {
-        return sp.getFloat(K_RATE, 1.0f);
+        float v = sp.getFloat(K_RATE, 2.0f);
+        if (v < 0.5f) {
+            return 0.5f;
+        }
+        if (v > 3.0f) {
+            return 3.0f;
+        }
+        return v;
     }
 
     public void setRate(float v) {
