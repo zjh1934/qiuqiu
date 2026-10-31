@@ -64,7 +64,9 @@
 
 ### 装现成的安装包
 
-👉 **[下载 看得清（最新版）](https://github.com/zjh1934/qiuqiu/releases/latest/download/kanqing.apk)**
+👉 **[下载 看得清（最新版）](https://github.com/zjh1934/qiuqiu/releases/latest)**
+
+> 点上面按钮会打开 **Releases 页面**，在「Assets」里下载 `明读3.4.apk` 即可安装。
 
 > 想用原来的「球球」？老版本留在 [apk/](apk/) 里，没有删。
 > 看到下面的[版本历史](#版本历史)自己挑。
